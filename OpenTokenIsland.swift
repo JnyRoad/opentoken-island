@@ -108,21 +108,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard serverProcess == nil else { return }
         let resources = Bundle.main.resourceURL!
         let server = resources.appendingPathComponent("server.js").path
-        let node = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/node") ? "/opt/homebrew/bin/node" : "/usr/bin/env"
+        let home = NSHomeDirectory()
+        let user = NSUserName()
+        let node = detectedNodeBinary(home: home)
+        let opentokenBin = detectedOpenTokenBinary(home: home)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: node)
         process.arguments = node.hasSuffix("env") ? ["node", server] : [server]
         process.currentDirectoryURL = resources
         process.environment = [
             "OPENTOKEN_ISLAND_PORT": "\(port)",
-            "OPENTOKEN_BIN": "/Users/yangguangxiaolaohu/.local/bin/opentoken",
-            "HOME": "/Users/yangguangxiaolaohu",
-            "USER": "yangguangxiaolaohu",
-            "LOGNAME": "yangguangxiaolaohu",
+            "OPENTOKEN_BIN": opentokenBin,
+            "HOME": home,
+            "USER": user,
+            "LOGNAME": user,
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         ]
         try? process.run()
         serverProcess = process
+    }
+
+    private func detectedNodeBinary(home: String) -> String {
+        if let configured = islandStateString("nodeBin", home: home),
+           FileManager.default.isExecutableFile(atPath: configured) {
+            return configured
+        }
+
+        let candidates = [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node"
+        ]
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        return "/usr/bin/env"
+    }
+
+    private func detectedOpenTokenBinary(home: String) -> String {
+        if let configured = islandStateString("opentokenBin", home: home),
+           FileManager.default.isExecutableFile(atPath: configured) {
+            return configured
+        }
+
+        let candidates = [
+            "\(home)/.local/bin/opentoken",
+            "/opt/homebrew/bin/opentoken",
+            "/usr/local/bin/opentoken"
+        ]
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        return "opentoken"
+    }
+
+    private func islandStateString(_ key: String, home: String) -> String? {
+        let url = URL(fileURLWithPath: home).appendingPathComponent(".opentoken/island-state.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = json[key] as? String,
+              !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 
     private func symbolImage(size: CGFloat) -> NSImage? {

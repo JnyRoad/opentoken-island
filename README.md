@@ -12,28 +12,30 @@ It combines:
 
 ## Install Locally
 
-Build and install the app:
+Install the app:
 
 ```bash
-rm -rf build "/Applications/OpenToken Island.app"
-mkdir -p "build/OpenToken Island.app/Contents/MacOS" \
-  "build/OpenToken Island.app/Contents/Resources/assets/scys"
-
-swiftc OpenTokenIsland.swift -framework Cocoa -framework WebKit \
-  -o "build/OpenToken Island.app/Contents/MacOS/OpenToken Island"
-
-cp popover.html island.html server.js "build/OpenToken Island.app/Contents/Resources/"
-cp assets/scys/icon_topnav.png "build/OpenToken Island.app/Contents/Resources/assets/scys/icon_topnav.png"
+./scripts/install.sh
 ```
 
-Create `build/OpenToken Island.app/Contents/Info.plist` with `LSUIElement` enabled, then copy the app to `/Applications`.
+The installer:
 
-This repository currently assumes:
+- Finds an existing local `opentoken` binary from `PATH`, `~/.local/bin`, Homebrew, or common app folders
+- Reads `~/.opentoken/config.json`
+- Stores the original scys upload URL in `~/.opentoken/island-state.json`
+- Rewrites `webhook_url` to the local proxy at `http://127.0.0.1:4174/...`
+- Builds and installs `/Applications/OpenToken Island.app`
+- Registers a login LaunchAgent at `~/Library/LaunchAgents/com.opentoken.island.plist`
 
-```text
-opentoken binary: /Users/yangguangxiaolaohu/.local/bin/opentoken
-local API port: 4174
+After that, OpenToken keeps using its own upload mechanism. OpenToken Island only listens to that upload payload, forwards it to scys, and renders the latest rank/game state.
+
+If `opentoken` is installed in a non-standard location, pass it explicitly:
+
+```bash
+OPENTOKEN_BIN="/path/to/opentoken" ./scripts/install.sh
 ```
+
+The local API port defaults to `4174`; override it with `OPENTOKEN_ISLAND_PORT=4175` if needed.
 
 ## Files
 
@@ -42,3 +44,4 @@ local API port: 4174
 - `popover.html` - extension popover UI
 - `island.html` - Dynamic Island notification UI
 - `index.html` - original browser prototype kept for design review
+- `scripts/install.sh` - local installer and OpenToken detector

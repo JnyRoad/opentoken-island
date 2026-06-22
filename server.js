@@ -1,13 +1,13 @@
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
-const OPENTOKEN = process.env.OPENTOKEN_BIN || "/Users/yangguangxiaolaohu/.local/bin/opentoken";
-const HOME = process.env.HOME || "/Users/yangguangxiaolaohu";
+const HOME = process.env.HOME || os.homedir();
 const CONFIG_PATH = path.join(HOME, ".opentoken", "config.json");
 const STATE_PATH = path.join(HOME, ".opentoken", "island-state.json");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
@@ -21,6 +21,7 @@ const mime = {
 };
 
 let state = loadState();
+const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
 function loadState() {
   try {
@@ -28,6 +29,21 @@ function loadState() {
   } catch {
     return {};
   }
+}
+
+function findOpenTokenBinary() {
+  const candidates = [
+    path.join(HOME, ".local", "bin", "opentoken"),
+    "/opt/homebrew/bin/opentoken",
+    "/usr/local/bin/opentoken",
+  ];
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return "";
 }
 
 function saveState() {
@@ -71,6 +87,11 @@ function ensureProxyConfig() {
   const config = readConfig();
   const current = String(config.webhook_url || "");
   let stateChanged = false;
+
+  if (!state.opentokenBin && OPENTOKEN !== "opentoken") {
+    state.opentokenBin = OPENTOKEN;
+    stateChanged = true;
+  }
 
   if (current) {
     if (isLocalWebhook(current)) {
