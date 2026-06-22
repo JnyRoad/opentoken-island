@@ -181,7 +181,7 @@ function formatCount(value) {
 }
 
 function formatPercent(value) {
-  return `${Math.round(value * 100)}%`;
+  return `${Math.round((Number.isFinite(value) ? value : 0) * 100)}%`;
 }
 
 function rowsFromPayload(payload) {
@@ -220,24 +220,58 @@ function toolsFromMap(byTool = {}) {
   return entries.slice(0, 6).map(([name, value]) => ({
     name,
     value,
-    label: name.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()),
+    label: toolLabel(name),
     valueLabel: formatCount(value),
     pct: Math.max(4, Math.round((value / max) * 100)),
   }));
 }
 
+function toolLabel(name) {
+  const labels = {
+    "claude-code": "Claude Code",
+    codex: "Codex",
+    gemini: "Gemini",
+    openclaw: "OpenClaw",
+    opencode: "opencode",
+  };
+  return labels[name] || name.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function toolIcon(name) {
+  const icons = {
+    "claude-code": "bot",
+    codex: "zap",
+    gemini: "sparkles",
+    openclaw: "terminal",
+    opencode: "code-2",
+  };
+  return icons[name] || "terminal";
+}
+
+function rankedTools(byTool = {}, total = 0) {
+  return Object.entries(byTool)
+    .map(([name, value]) => ({
+      name,
+      value: Number(value || 0),
+      label: toolLabel(name),
+      icon: toolIcon(name),
+      share: total > 0 ? Number(value || 0) / total : 0,
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
 function buildGame({ total, rank, rankDelta, byTool, previous, next, gap, lead }) {
   const levelSize = 25_000_000;
   const highOutputTarget = 300_000_000;
-  const codexShareTarget = 0.3;
-  const codexValue = Number(byTool.codex || 0);
-  const codexShare = total > 0 ? codexValue / total : 0;
+  const toolRanks = rankedTools(byTool, total);
+  const mainTool = toolRanks[0] || { name: "", label: "Main Tool", icon: "terminal", value: 0, share: 0 };
+  const runnerUpTool = toolRanks[1] || null;
+  const mainLead = runnerUpTool ? Math.max(0, mainTool.value - runnerUpTool.value) : mainTool.value;
   const accepted = Number(state.lastUpload?.upstream?.json?.accepted || 0);
   const level = Math.max(1, Math.floor(total / levelSize) + 1);
   const xp = total > 0 ? total % levelSize : 0;
   const xpPct = Math.max(4, Math.round((xp / levelSize) * 100));
   const scoreDone = total >= highOutputTarget;
-  const codexDone = codexShare >= codexShareTarget;
   const king = rank === 1;
   const rankQuest = king
     ? {
@@ -262,8 +296,17 @@ function buildGame({ total, rank, rankDelta, byTool, previous, next, gap, lead }
     xpMax: levelSize,
     xpPct,
     xpLabel: `${formatCount(xp)} / ${formatCount(levelSize)} XP`,
-    codexShare,
-    codexShareLabel: formatPercent(codexShare),
+    codexShare: total > 0 ? Number(byTool.codex || 0) / total : 0,
+    codexShareLabel: formatPercent(total > 0 ? Number(byTool.codex || 0) / total : 0),
+    mainTool: {
+      name: mainTool.name,
+      label: mainTool.label,
+      value: mainTool.value,
+      valueLabel: formatCount(mainTool.value),
+      share: mainTool.share,
+      shareLabel: formatPercent(mainTool.share),
+      leadLabel: formatCount(mainLead),
+    },
     quests: [
       rankQuest,
       {
@@ -274,11 +317,13 @@ function buildGame({ total, rank, rankDelta, byTool, previous, next, gap, lead }
         done: scoreDone,
       },
       {
-        icon: "zap",
-        title: "支线任务：Codex 占比 30%",
-        detail: `${formatPercent(codexShare)} / ${formatPercent(codexShareTarget)}`,
+        icon: mainTool.icon,
+        title: `主力工具：${mainTool.label} Main`,
+        detail: runnerUpTool
+          ? `领先 ${runnerUpTool.label} ${formatCount(mainLead)}`
+          : `${formatPercent(mainTool.share)} share`,
         rewardLabel: "+240",
-        done: codexDone,
+        done: mainTool.value > 0,
       },
     ],
     badges: [
@@ -297,10 +342,10 @@ function buildGame({ total, rank, rankDelta, byTool, previous, next, gap, lead }
         featured: scoreDone && !king,
       },
       {
-        icon: "zap",
-        title: "Codex Main",
-        detail: `${formatPercent(codexShare)} share`,
-        unlocked: codexDone,
+        icon: mainTool.icon,
+        title: `${mainTool.label} Main`,
+        detail: `${formatPercent(mainTool.share)} share`,
+        unlocked: mainTool.value > 0,
         featured: false,
       },
       {
