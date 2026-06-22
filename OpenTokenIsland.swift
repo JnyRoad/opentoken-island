@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var timer: Timer?
     private let contextMenu = NSMenu()
     private let port = 4174
+    private var lastRank: Int?
+    private var unlockedBadgeTitles = Set<String>()
+    private var didLoadInitialSnapshot = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -34,8 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         button.action = #selector(togglePopover)
         button.target = self
 
-        contextMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r"))
-        contextMenu.addItem(NSMenuItem(title: "Quit OpenToken Island", action: #selector(quit), keyEquivalent: "q"))
+        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
+        refreshItem.target = self
+        contextMenu.addItem(refreshItem)
+        let islandItem = NSMenuItem(title: "Show Island", action: #selector(showIslandNow), keyEquivalent: "i")
+        islandItem.target = self
+        contextMenu.addItem(islandItem)
+        let quitItem = NSMenuItem(title: "Quit OpenToken Island", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        contextMenu.addItem(quitItem)
         statusItem.menu = nil
 
         let rightClick = NSClickGestureRecognizer(target: self, action: #selector(showContextMenu(_:)))
@@ -144,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         showIsland()
     }
 
+    @objc private func showIslandNow() {
+        showIsland()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -163,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                   let total = json["totalLabel"] as? String else { return }
             let waiting = json["waiting"] as? Bool ?? false
             let rank = json["rank"] as? Int
+            let unlockedBadges = self?.currentUnlockedBadges(from: json) ?? []
             DispatchQueue.main.async {
                 if waiting {
                     self?.statusItem.button?.title = " waiting"
@@ -171,8 +186,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 } else {
                     self?.statusItem.button?.title = " \(total)"
                 }
+                if self?.shouldShowIsland(waiting: waiting, rank: rank, unlockedBadges: unlockedBadges) == true {
+                    self?.showIsland()
+                }
             }
         }.resume()
+    }
+
+    private func currentUnlockedBadges(from json: [String: Any]) -> Set<String> {
+        guard let badges = json["badges"] as? [[String: Any]] else { return [] }
+        return Set(badges.compactMap { badge in
+            guard badge["unlocked"] as? Bool == true else { return nil }
+            return badge["title"] as? String
+        })
+    }
+
+    private func shouldShowIsland(waiting: Bool, rank: Int?, unlockedBadges: Set<String>) -> Bool {
+        guard !waiting else { return false }
+        defer {
+            didLoadInitialSnapshot = true
+            lastRank = rank
+            unlockedBadgeTitles = unlockedBadges
+        }
+
+        guard didLoadInitialSnapshot else { return false }
+        let rankChanged = rank != nil && lastRank != nil && rank != lastRank
+        let hasNewBadge = !unlockedBadges.subtracting(unlockedBadgeTitles).isEmpty
+        return rankChanged || hasNewBadge
     }
 }
 

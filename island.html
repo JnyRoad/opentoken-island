@@ -1,1 +1,47 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script><style>:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial,sans-serif;--blue:#0a84ff;--gold:#d8bf85}*{box-sizing:border-box}body{margin:0;background:transparent;color:white;overflow:hidden}.island{position:relative;width:560px;height:118px;border-radius:34px;background:#000;box-shadow:0 28px 88px rgba(0,0,0,.58);overflow:hidden}.mark{position:absolute;right:-10px;bottom:-34px;width:104px;height:104px;overflow:hidden;opacity:.16;mask-image:linear-gradient(to top,#000,rgba(0,0,0,.55),transparent);-webkit-mask-image:linear-gradient(to top,#000,rgba(0,0,0,.55),transparent)}.mark img{width:407px;height:104px;object-fit:contain;object-position:left center}.content{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:54px 1fr 104px;align-items:center;gap:14px;padding:18px 22px}.icon{width:48px;height:48px;border-radius:18px;display:grid;place-items:center;background:rgba(255,255,255,.12);color:var(--blue)}h1{margin:0 0 5px;font-size:17px;line-height:1.15}.copy{margin:0;color:rgba(255,255,255,.64);font-size:13px;line-height:1.35}.metric{text-align:right;font-variant-numeric:tabular-nums}.metric strong{font-size:24px;display:block}.metric span{font-size:12px;color:rgba(255,255,255,.52)}.track{grid-column:2/4;height:7px;border-radius:99px;background:rgba(255,255,255,.10);overflow:hidden;margin-top:-8px}.track i{display:block;height:100%;width:68%;border-radius:inherit;background:linear-gradient(90deg,var(--blue),#64d2ff,#ff9f0a);animation:fill .9s cubic-bezier(.16,1,.3,1)}@keyframes fill{from{width:0}to{width:68%}}</style></head><body><section class="island"><span class="mark"><img src="./assets/scys/icon_topnav.png" alt=""></span><div class="content"><div class="icon"><i data-lucide="award"></i></div><div><h1 id="title">OpenToken 已同步</h1><p id="copy" class="copy">真实数据已刷新，排名和今日 token 已更新。</p></div><div class="metric"><strong id="metric">+XP</strong><span id="meta">live</span></div><div class="track"><i></i></div></div></section><script>if(window.lucide)lucide.createIcons(); fetch('/api/summary').then(r=>r.json()).then(d=>{if(d.ok){title.textContent=`今日 ${d.totalLabel} token`; copy.textContent=`后台服务运行中，当前排名 #${d.rank}。`; metric.textContent='+'+(d.xp||0); meta.textContent='XP';}}).catch(()=>{});</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial,sans-serif;--blue:#0a84ff;--gold:#d8bf85}
+    *{box-sizing:border-box}body{margin:0;background:transparent;color:white;overflow:hidden}.island{position:relative;width:560px;height:118px;border-radius:34px;background:#000;box-shadow:0 28px 88px rgba(0,0,0,.58);overflow:hidden}.mark{position:absolute;right:-6px;bottom:-32px;width:106px;height:106px;overflow:hidden;opacity:.20;z-index:2;pointer-events:none;mix-blend-mode:screen;mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent);-webkit-mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent)}.mark img{width:415px;height:106px;object-fit:contain;object-position:left center}.content{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:54px 1fr 104px;align-items:center;gap:14px;padding:18px 22px}.icon{width:48px;height:48px;border-radius:18px;display:grid;place-items:center;background:rgba(255,255,255,.12);color:var(--blue)}h1{margin:0 0 5px;font-size:17px;line-height:1.15}.copy{margin:0;color:rgba(255,255,255,.64);font-size:13px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metric{text-align:right;font-variant-numeric:tabular-nums}.metric strong{font-size:24px;display:block}.metric span{font-size:12px;color:rgba(255,255,255,.52);white-space:nowrap}.track{grid-column:2/4;height:7px;border-radius:99px;background:rgba(255,255,255,.10);overflow:hidden;margin-top:-8px}.track i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--blue),#64d2ff,#ff9f0a);transition:width .9s cubic-bezier(.16,1,.3,1)}
+  </style>
+</head>
+<body>
+  <section class="island">
+    <span class="mark"><img src="./assets/scys/icon_topnav.png" alt=""></span>
+    <div class="content">
+      <div class="icon"><i data-lucide="award"></i></div>
+      <div>
+        <h1 id="title">OpenToken 已同步</h1>
+        <p id="copy" class="copy">真实数据已刷新，排名和今日 token 已更新。</p>
+      </div>
+      <div class="metric"><strong id="metric">#--</strong><span id="meta">live</span></div>
+      <div class="track"><i id="trackFill"></i></div>
+    </div>
+  </section>
+  <script>
+    if (window.lucide) lucide.createIcons();
+    const titleEl = document.getElementById('title');
+    const copyEl = document.getElementById('copy');
+    const metricEl = document.getElementById('metric');
+    const metaEl = document.getElementById('meta');
+    const trackFillEl = document.getElementById('trackFill');
+    fetch('/api/summary').then((response) => response.json()).then((data) => {
+      if (!data.ok) return;
+      const game = data.game || {};
+      titleEl.textContent = `今日 ${data.totalLabel || '--'} token`;
+      if (data.rank === 1) {
+        copyEl.textContent = `守住第 1，领先 ${data.nextName || '第 2 名'} ${data.leadOverNextLabel || '0'}。`;
+      } else {
+        copyEl.textContent = `当前 ${data.rankLabel || '#--'}，距 ${data.previousName || '上一名'} ${data.gapToPreviousLabel || '0'}。`;
+      }
+      metricEl.textContent = data.rankLabel || '#--';
+      metaEl.textContent = game.mainTool ? game.mainTool.label : 'live';
+      trackFillEl.style.width = Math.max(4, game.xpPct || 0) + '%';
+    }).catch(() => {});
+  </script>
+</body>
+</html>
