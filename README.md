@@ -37,6 +37,20 @@ OPENTOKEN_BIN="/path/to/opentoken" ./scripts/install.sh
 
 The local API port defaults to `4174`; override it with `OPENTOKEN_ISLAND_PORT=4175` if needed.
 
+## Debug Island Popup
+
+Trigger the Dynamic Island popup once:
+
+```bash
+curl -sS -X POST "http://127.0.0.1:4174/api/debug/island"
+```
+
+Watch the listener log:
+
+```bash
+tail -f ~/.opentoken/island-events.log
+```
+
 ## Files
 
 - `OpenTokenIsland.swift` - native AppKit menu bar shell

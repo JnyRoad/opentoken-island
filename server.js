@@ -10,6 +10,7 @@ const ROOT = __dirname;
 const HOME = process.env.HOME || os.homedir();
 const CONFIG_PATH = path.join(HOME, ".opentoken", "config.json");
 const STATE_PATH = path.join(HOME, ".opentoken", "island-state.json");
+const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
 
 const mime = {
@@ -49,6 +50,33 @@ function findOpenTokenBinary() {
 function saveState() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+}
+
+function logIslandEvent(message, details = {}) {
+  fs.mkdirSync(path.dirname(EVENT_LOG_PATH), { recursive: true });
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    layer: "server",
+    message,
+    ...details,
+  });
+  fs.appendFileSync(EVENT_LOG_PATH, `${line}\n`);
+}
+
+function queueIslandEvent(reason = "manual") {
+  const event = {
+    id: Date.now(),
+    createdAt: new Date().toISOString(),
+    reason,
+  };
+  state.islandEvent = event;
+  saveState();
+  logIslandEvent("queued island event", event);
+  return event;
+}
+
+function currentIslandEvent() {
+  return state.islandEvent || { id: 0, createdAt: "", reason: "none" };
 }
 
 function readConfig() {
@@ -547,6 +575,12 @@ async function handleUploadProxy(req, res, url) {
     summary,
   };
   saveState();
+  logIslandEvent("captured upload payload", {
+    path: url.pathname,
+    date: summary.date,
+    total: summary.total,
+    rowCount: summary.rowCount,
+  });
 
   const upstream = await requestText("POST", upstreamUrl, body, {
     "content-type": req.headers["content-type"] || "application/json",
@@ -562,9 +596,19 @@ async function handleUploadProxy(req, res, url) {
     error: upstream.error || "",
   };
   saveState();
+  logIslandEvent("forwarded upload upstream", {
+    status: upstream.status,
+    ok: upstream.ok,
+    accepted: upstream.json?.accepted ?? null,
+  });
 
   if (upstream.ok && summary.total > 0) {
-    await refreshLeaderboard(summary, previousRank);
+    const leaderboard = await refreshLeaderboard(summary, previousRank);
+    logIslandEvent("refreshed leaderboard", {
+      rank: leaderboard?.own?.rank ?? null,
+      gapToPrevious: leaderboard?.gapToPrevious ?? null,
+      leadOverNext: leaderboard?.leadOverNext ?? null,
+    });
   }
 
   res.writeHead(upstream.status || 502, {
@@ -574,6 +618,21 @@ async function handleUploadProxy(req, res, url) {
 }
 
 async function handleApi(req, res, url) {
+  if (url.pathname === "/api/island-event") {
+    return json(res, 200, { ok: true, event: currentIslandEvent() });
+  }
+
+  if (url.pathname === "/api/debug/island") {
+    if (req.method !== "POST") return json(res, 405, { ok: false, error: "POST required" });
+    const reason = url.searchParams.get("reason") || "manual-debug";
+    const event = queueIslandEvent(reason);
+    return json(res, 200, {
+      ok: true,
+      event,
+      summary: buildSummary(),
+    });
+  }
+
   if (url.pathname === "/api/summary") {
     if (url.searchParams.get("refresh") === "1" && state.lastUpload?.summary) {
       await refreshLeaderboard(state.lastUpload.summary, state.leaderboard?.own?.rank || null);

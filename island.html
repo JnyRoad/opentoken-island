@@ -5,12 +5,39 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
-    :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial,sans-serif;--blue:#0a84ff;--gold:#d8bf85}
-    *{box-sizing:border-box}body{margin:0;background:transparent;color:white;overflow:hidden}.island{position:relative;width:560px;height:118px;border-radius:34px;background:#000;box-shadow:0 28px 88px rgba(0,0,0,.58);overflow:hidden}.mark{position:absolute;right:-6px;bottom:-32px;width:106px;height:106px;overflow:hidden;opacity:.20;z-index:2;pointer-events:none;mix-blend-mode:screen;mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent);-webkit-mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent)}.mark img{width:415px;height:106px;object-fit:contain;object-position:left center}.content{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:54px 1fr 104px;align-items:center;gap:14px;padding:18px 22px}.icon{width:48px;height:48px;border-radius:18px;display:grid;place-items:center;background:rgba(255,255,255,.12);color:var(--blue)}h1{margin:0 0 5px;font-size:17px;line-height:1.15}.copy{margin:0;color:rgba(255,255,255,.64);font-size:13px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metric{text-align:right;font-variant-numeric:tabular-nums}.metric strong{font-size:24px;display:block}.metric span{font-size:12px;color:rgba(255,255,255,.52);white-space:nowrap}.track{grid-column:2/4;height:7px;border-radius:99px;background:rgba(255,255,255,.10);overflow:hidden;margin-top:-8px}.track i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--blue),#64d2ff,#ff9f0a);transition:width .9s cubic-bezier(.16,1,.3,1)}
+    :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial,sans-serif;--blue:#0a84ff;--scys-green:#36a590;--scys-gold:#d8bf85;--scys-orange:#ff8617}
+    *{box-sizing:border-box}
+    body{margin:0;background:transparent;color:white;overflow:hidden}
+    .island{position:relative;width:560px;height:118px;border-radius:34px;background:#000;box-shadow:0 28px 88px rgba(0,0,0,.58);overflow:hidden}
+    .island::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 78% 20%,rgba(54,165,144,.18),transparent 28%),radial-gradient(circle at 34% 110%,rgba(216,191,133,.12),transparent 34%);pointer-events:none}
+    .spark{position:absolute;width:5px;height:5px;border-radius:999px;z-index:3;opacity:0;pointer-events:none;background:var(--scys-gold);box-shadow:0 0 14px rgba(216,191,133,.92);animation:spark 1250ms cubic-bezier(.16,1,.3,1) both}
+    .spark.s1{right:72px;top:23px;--dx:18px;--dy:-22px;animation-delay:110ms}
+    .spark.s2{right:126px;top:78px;--dx:24px;--dy:16px;animation-delay:210ms;background:var(--scys-green);box-shadow:0 0 14px rgba(54,165,144,.92)}
+    .spark.s3{left:78px;top:24px;--dx:-20px;--dy:-20px;animation-delay:160ms}
+    .spark.s4{left:236px;top:18px;width:4px;height:4px;--dx:10px;--dy:-18px;animation-delay:260ms;background:var(--scys-orange);box-shadow:0 0 12px rgba(255,134,23,.88)}
+    .spark.s5{right:198px;bottom:26px;width:4px;height:4px;--dx:-14px;--dy:18px;animation-delay:320ms;background:#fff;box-shadow:0 0 12px rgba(255,255,255,.74)}
+    .mark{position:absolute;right:-6px;bottom:-32px;width:106px;height:106px;overflow:hidden;opacity:.20;z-index:2;pointer-events:none;mix-blend-mode:screen;mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent);-webkit-mask-image:linear-gradient(to top,#000 4%,rgba(0,0,0,.68) 58%,transparent)}
+    .mark img{width:415px;height:106px;object-fit:contain;object-position:left center}
+    .content{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:54px 1fr 104px;align-items:center;gap:14px;padding:18px 22px}
+    .icon{width:48px;height:48px;border-radius:18px;display:grid;place-items:center;background:rgba(255,255,255,.12);color:var(--blue)}
+    h1{margin:0 0 5px;font-size:17px;line-height:1.15}
+    .copy{margin:0;color:rgba(255,255,255,.64);font-size:13px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .metric{text-align:right;font-variant-numeric:tabular-nums}
+    .metric strong{font-size:24px;display:block}
+    .metric span{font-size:12px;color:rgba(255,255,255,.52);white-space:nowrap}
+    .track{grid-column:2/4;height:7px;border-radius:99px;background:rgba(255,255,255,.10);overflow:hidden;margin-top:-8px}
+    .track i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--scys-green),var(--scys-gold),var(--scys-orange));transition:width .9s cubic-bezier(.16,1,.3,1)}
+    @keyframes spark{0%{transform:translate3d(0,0,0) scale(.2);opacity:0}18%{opacity:1}100%{transform:translate3d(var(--dx),var(--dy),0) scale(1.55);opacity:0}}
+    @media (prefers-reduced-motion:reduce){.spark{display:none}.track i{transition:none}}
   </style>
 </head>
 <body>
   <section class="island">
+    <span class="spark s1"></span>
+    <span class="spark s2"></span>
+    <span class="spark s3"></span>
+    <span class="spark s4"></span>
+    <span class="spark s5"></span>
     <span class="mark"><img src="./assets/scys/icon_topnav.png" alt=""></span>
     <div class="content">
       <div class="icon"><i data-lucide="award"></i></div>

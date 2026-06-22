@@ -76,6 +76,8 @@ write_info_plist() {
   <string>OpenToken Island</string>
   <key>CFBundleIdentifier</key>
   <string>com.opentoken.island</string>
+  <key>CFBundleIconFile</key>
+  <string>OpenTokenIsland</string>
   <key>CFBundleName</key>
   <string>OpenToken Island</string>
   <key>CFBundlePackageType</key>
@@ -173,6 +175,41 @@ console.log(`local:     ${localWebhookUrl}`);
 NODE
 }
 
+build_app_icon() {
+  local logo="${ROOT_DIR}/assets/scys/icon_topnav.png"
+  local source_icon="${BUILD_DIR}/app-icon-source.png"
+  local iconset="${BUILD_DIR}/OpenTokenIsland.iconset"
+  local output_icon="${BUILD_APP}/Contents/Resources/OpenTokenIsland.icns"
+  local logo_width
+  local logo_height
+  local crop_size
+  local horizontal_offset
+
+  logo_width="$(sips -g pixelWidth "${logo}" 2>/dev/null | awk '/pixelWidth:/ {print $2}')"
+  logo_height="$(sips -g pixelHeight "${logo}" 2>/dev/null | awk '/pixelHeight:/ {print $2}')"
+  [[ -n "${logo_width}" && -n "${logo_height}" ]] || die "could not read logo size from ${logo}"
+
+  crop_size="${logo_height}"
+  horizontal_offset=$(( crop_size / 2 - logo_width / 2 ))
+
+  rm -rf "${iconset}"
+  mkdir -p "${iconset}"
+  sips -c "${crop_size}" "${crop_size}" --cropOffset 0 "${horizontal_offset}" \
+    "${logo}" --out "${source_icon}" >/dev/null
+
+  sips -z 16 16 "${source_icon}" --out "${iconset}/icon_16x16.png" >/dev/null
+  sips -z 32 32 "${source_icon}" --out "${iconset}/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "${source_icon}" --out "${iconset}/icon_32x32.png" >/dev/null
+  sips -z 64 64 "${source_icon}" --out "${iconset}/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "${source_icon}" --out "${iconset}/icon_128x128.png" >/dev/null
+  sips -z 256 256 "${source_icon}" --out "${iconset}/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "${source_icon}" --out "${iconset}/icon_256x256.png" >/dev/null
+  sips -z 512 512 "${source_icon}" --out "${iconset}/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "${source_icon}" --out "${iconset}/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "${source_icon}" --out "${iconset}/icon_512x512@2x.png" >/dev/null
+  iconutil -c icns "${iconset}" -o "${output_icon}"
+}
+
 build_app() {
   rm -rf "${BUILD_APP}"
   mkdir -p "${BUILD_APP}/Contents/MacOS" \
@@ -187,6 +224,7 @@ build_app() {
     "${BUILD_APP}/Contents/Resources/"
   cp "${ROOT_DIR}/assets/scys/icon_topnav.png" \
     "${BUILD_APP}/Contents/Resources/assets/scys/icon_topnav.png"
+  build_app_icon
   write_info_plist
 }
 
@@ -230,6 +268,8 @@ PLIST
 main() {
   need_command swiftc
   need_command node
+  need_command sips
+  need_command iconutil
 
   local opentoken_bin
   local node_bin

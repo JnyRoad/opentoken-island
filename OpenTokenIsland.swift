@@ -7,14 +7,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var islandWindow: NSPanel?
     private var serverProcess: Process?
     private var timer: Timer?
+    private var eventTimer: Timer?
     private let contextMenu = NSMenu()
     private let port = 4174
     private var lastRank: Int?
+    private var lastIslandEventId: Int64 = 0
     private var unlockedBadgeTitles = Set<String>()
     private var didLoadInitialSnapshot = false
+    private var didLoadIslandEventSnapshot = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        NSApp.applicationIconImage = symbolImage(size: 256)
+        logIsland("app launched")
         startServer()
         setupStatusItem()
         setupPopover()
@@ -22,9 +27,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.updateStatusTitle()
         }
+        eventTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.checkIslandEvent()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.checkIslandEvent()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        logIsland("app terminating")
+        timer?.invalidate()
+        eventTimer?.invalidate()
         serverProcess?.terminate()
     }
 
@@ -68,7 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
 
-    private func showIsland() {
+    private func showIsland(reason: String = "manual") {
+        logIsland("showIsland requested reason=\(reason)")
         let width: CGFloat = 560
         let height: CGFloat = 118
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -97,10 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.contentView = webView
         panel.orderFrontRegardless()
         islandWindow = panel
+        logIsland("showIsland displayed reason=\(reason)")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) { [weak self, weak panel] in
             panel?.orderOut(nil)
             if self?.islandWindow === panel { self?.islandWindow = nil }
+            self?.logIsland("showIsland dismissed reason=\(reason)")
         }
     }
 
@@ -198,11 +215,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     @objc private func refreshNow() {
         updateStatusTitle()
-        showIsland()
+        showIsland(reason: "refresh-menu")
     }
 
     @objc private func showIslandNow() {
-        showIsland()
+        showIsland(reason: "manual-menu")
     }
 
     @objc private func quit() {
@@ -226,16 +243,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             let rank = json["rank"] as? Int
             let unlockedBadges = self?.currentUnlockedBadges(from: json) ?? []
             DispatchQueue.main.async {
+                guard let self else { return }
                 if waiting {
-                    self?.statusItem.button?.title = " waiting"
+                    self.statusItem.button?.title = " waiting"
                 } else if let rank {
-                    self?.statusItem.button?.title = " \(total) #\(rank)"
+                    self.statusItem.button?.title = " \(total) #\(rank)"
                 } else {
-                    self?.statusItem.button?.title = " \(total)"
+                    self.statusItem.button?.title = " \(total)"
                 }
-                if self?.shouldShowIsland(waiting: waiting, rank: rank, unlockedBadges: unlockedBadges) == true {
-                    self?.showIsland()
+                if self.shouldShowIsland(waiting: waiting, rank: rank, unlockedBadges: unlockedBadges) {
+                    self.showIsland(reason: "rank-or-badge-change")
                 }
+            }
+        }.resume()
+    }
+
+    private func checkIslandEvent() {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/island-event") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            if let error {
+                self?.logIsland("event poll failed error=\(error.localizedDescription)")
+                return
+            }
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let event = json["event"] as? [String: Any] else { return }
+
+            let id = (event["id"] as? NSNumber)?.int64Value ?? 0
+            let reason = event["reason"] as? String ?? "unknown"
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if !self.didLoadIslandEventSnapshot {
+                    self.lastIslandEventId = id
+                    self.didLoadIslandEventSnapshot = true
+                    self.logIsland("event baseline id=\(id) reason=\(reason)")
+                    return
+                }
+
+                guard id > self.lastIslandEventId else { return }
+                self.lastIslandEventId = id
+                self.logIsland("event detected id=\(id) reason=\(reason)")
+                self.showIsland(reason: "event:\(reason)")
             }
         }.resume()
     }
@@ -260,6 +309,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let rankChanged = rank != nil && lastRank != nil && rank != lastRank
         let hasNewBadge = !unlockedBadges.subtracting(unlockedBadgeTitles).isEmpty
         return rankChanged || hasNewBadge
+    }
+
+    private func logIsland(_ message: String) {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".opentoken")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("island-events.log")
+        let line = "\(ISO8601DateFormatter().string(from: Date())) layer=app \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+
+        if FileManager.default.fileExists(atPath: file.path),
+           let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        } else {
+            try? data.write(to: file)
+        }
     }
 }
 
