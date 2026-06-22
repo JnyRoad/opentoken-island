@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         islandWindow = panel
         logIsland("showIsland displayed reason=\(reason)")
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) { [weak self, weak panel] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak panel] in
             panel?.orderOut(nil)
             if self?.islandWindow === panel { self?.islandWindow = nil }
             self?.logIsland("showIsland dismissed reason=\(reason)")

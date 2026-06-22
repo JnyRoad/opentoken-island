@@ -77,15 +77,15 @@ write_info_plist() {
   <key>CFBundleIdentifier</key>
   <string>com.opentoken.island</string>
   <key>CFBundleIconFile</key>
-  <string>OpenTokenIsland</string>
+  <string>OpenTokenIslandBrand</string>
   <key>CFBundleName</key>
   <string>OpenToken Island</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.1.1</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSAppTransportSecurity</key>
@@ -176,26 +176,94 @@ NODE
 }
 
 build_app_icon() {
-  local logo="${ROOT_DIR}/assets/scys/icon_topnav.png"
+  local symbol="${ROOT_DIR}/assets/scys/icon_symbol.png"
   local source_icon="${BUILD_DIR}/app-icon-source.png"
+  local icon_maker="${BUILD_DIR}/make-app-icon.swift"
+  local icon_maker_bin="${BUILD_DIR}/make-app-icon"
   local iconset="${BUILD_DIR}/OpenTokenIsland.iconset"
-  local output_icon="${BUILD_APP}/Contents/Resources/OpenTokenIsland.icns"
-  local logo_width
-  local logo_height
-  local crop_size
-  local horizontal_offset
-
-  logo_width="$(sips -g pixelWidth "${logo}" 2>/dev/null | awk '/pixelWidth:/ {print $2}')"
-  logo_height="$(sips -g pixelHeight "${logo}" 2>/dev/null | awk '/pixelHeight:/ {print $2}')"
-  [[ -n "${logo_width}" && -n "${logo_height}" ]] || die "could not read logo size from ${logo}"
-
-  crop_size="${logo_height}"
-  horizontal_offset=$(( crop_size / 2 - logo_width / 2 ))
+  local output_icon="${BUILD_APP}/Contents/Resources/OpenTokenIslandBrand.icns"
 
   rm -rf "${iconset}"
   mkdir -p "${iconset}"
-  sips -c "${crop_size}" "${crop_size}" --cropOffset 0 "${horizontal_offset}" \
-    "${logo}" --out "${source_icon}" >/dev/null
+
+  cat > "${icon_maker}" <<'SWIFT'
+import AppKit
+
+let inputPath = CommandLine.arguments[1]
+let outputPath = CommandLine.arguments[2]
+let canvasSize: CGFloat = 1024
+let symbolSize: CGFloat = 660
+let canvas = NSImage(size: NSSize(width: canvasSize, height: canvasSize))
+
+guard let symbol = NSImage(contentsOfFile: inputPath) else {
+    fatalError("Could not load symbol image")
+}
+guard
+    let symbolTiff = symbol.tiffRepresentation,
+    let sourceRep = NSBitmapImageRep(data: symbolTiff),
+    let goldRep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: sourceRep.pixelsWide,
+        pixelsHigh: sourceRep.pixelsHigh,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    )
+else {
+    fatalError("Could not read symbol pixels")
+}
+let symbolSourceRect = NSRect(x: 0, y: 0, width: sourceRep.pixelsWide, height: sourceRep.pixelsHigh)
+
+let brandGreen = NSColor(calibratedRed: 0x36 / 255.0, green: 0xA5 / 255.0, blue: 0x90 / 255.0, alpha: 1)
+let brandGold = NSColor(calibratedRed: 0xF1 / 255.0, green: 0xD8 / 255.0, blue: 0xA8 / 255.0, alpha: 1)
+
+for y in 0..<sourceRep.pixelsHigh {
+    for x in 0..<sourceRep.pixelsWide {
+        guard let color = sourceRep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+        let brightness = max(color.redComponent, color.greenComponent, color.blueComponent)
+        let alpha = brightness > 0.06
+            ? min(1, (brightness - 0.06) / 0.32) * color.alphaComponent
+            : 0
+        goldRep.setColor(brandGold.withAlphaComponent(alpha), atX: x, y: y)
+    }
+}
+let goldSymbol = NSImage(size: NSSize(width: sourceRep.pixelsWide, height: sourceRep.pixelsHigh))
+goldSymbol.addRepresentation(goldRep)
+
+canvas.lockFocus()
+brandGreen.setFill()
+NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: canvasSize, height: canvasSize), xRadius: 220, yRadius: 220).fill()
+
+NSColor(calibratedWhite: 0, alpha: 0.12).setStroke()
+let border = NSBezierPath(roundedRect: NSRect(x: 24, y: 24, width: canvasSize - 48, height: canvasSize - 48), xRadius: 198, yRadius: 198)
+border.lineWidth = 24
+border.stroke()
+
+let symbolRect = NSRect(
+    x: (canvasSize - symbolSize) / 2,
+    y: (canvasSize - symbolSize) / 2,
+    width: symbolSize,
+    height: symbolSize
+)
+goldSymbol.draw(in: symbolRect, from: symbolSourceRect, operation: .sourceOver, fraction: 1)
+canvas.unlockFocus()
+
+guard
+    let tiff = canvas.tiffRepresentation,
+    let bitmap = NSBitmapImageRep(data: tiff),
+    let png = bitmap.representation(using: .png, properties: [:])
+else {
+    fatalError("Could not render app icon")
+}
+
+try png.write(to: URL(fileURLWithPath: outputPath))
+SWIFT
+  swiftc "${icon_maker}" -framework AppKit -o "${icon_maker_bin}"
+  "${icon_maker_bin}" "${symbol}" "${source_icon}" 2>/dev/null
 
   sips -z 16 16 "${source_icon}" --out "${iconset}/icon_16x16.png" >/dev/null
   sips -z 32 32 "${source_icon}" --out "${iconset}/icon_16x16@2x.png" >/dev/null
@@ -293,5 +361,14 @@ main() {
     printf 'OpenToken daemon: status check failed; run `opentoken service status` if uploads do not arrive.\n'
   fi
 }
+
+if [[ "${1:-}" == "--build-app-only" ]]; then
+  need_command swiftc
+  need_command sips
+  need_command iconutil
+  build_app
+  printf 'Built %s\n' "${BUILD_APP}"
+  exit 0
+fi
 
 main "$@"

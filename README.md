@@ -37,6 +37,16 @@ OPENTOKEN_BIN="/path/to/opentoken" ./scripts/install.sh
 
 The local API port defaults to `4174`; override it with `OPENTOKEN_ISLAND_PORT=4175` if needed.
 
+## Build Installer Package
+
+Build a local macOS installer package:
+
+```bash
+./scripts/build-pkg.sh
+```
+
+The package installs `OpenToken Island.app` into `/Applications`, writes the user LaunchAgent, and starts the menu bar app after install. The App icon is generated from the circular SCYS symbol in `assets/scys/icon_topnav.png`.
+
 ## Debug Island Popup
 
 Trigger the Dynamic Island popup once:
@@ -59,3 +69,4 @@ tail -f ~/.opentoken/island-events.log
 - `island.html` - Dynamic Island notification UI
 - `index.html` - original browser prototype kept for design review
 - `scripts/install.sh` - local installer and OpenToken detector
+- `scripts/build-pkg.sh` - macOS `.pkg` installer builder
