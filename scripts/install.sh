@@ -247,8 +247,7 @@ install_launch_agent() {
   <array>
     <string>/usr/bin/open</string>
     <string>-g</string>
-    <string>-a</string>
-    <string>${APP_NAME}</string>
+    <string>${APP_DIR}</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -281,7 +280,7 @@ main() {
   install_app
   install_launch_agent
 
-  open -a "${APP_NAME}"
+  open -g "${APP_DIR}"
   sleep 2
 
   printf '\nInstalled %s\n' "${APP_DIR}"

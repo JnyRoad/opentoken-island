@@ -79,6 +79,10 @@ function currentIslandEvent() {
   return state.islandEvent || { id: 0, createdAt: "", reason: "none" };
 }
 
+function redactUploadPath(pathname = "") {
+  return String(pathname).replace(/(\/tokenrank\/api\/subapp\/u\/)[^/?#]+/, "$1<account>");
+}
+
 function readConfig() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -562,6 +566,7 @@ function accountStatus() {
 async function handleUploadProxy(req, res, url) {
   const proxy = ensureProxyConfig();
   const upstreamUrl = proxy.upstreamUrl || `${DEFAULT_UPSTREAM_ORIGIN}${url.pathname}${url.search}`;
+  const redactedPath = redactUploadPath(url.pathname);
   const bodyBuffer = await readBody(req);
   const body = bodyBuffer.toString("utf8");
   const payload = safeJson(body);
@@ -570,13 +575,13 @@ async function handleUploadProxy(req, res, url) {
 
   state.lastUpload = {
     capturedAt: new Date().toISOString(),
-    path: url.pathname,
+    path: redactedPath,
     payload,
     summary,
   };
   saveState();
   logIslandEvent("captured upload payload", {
-    path: url.pathname,
+    path: redactedPath,
     date: summary.date,
     total: summary.total,
     rowCount: summary.rowCount,
