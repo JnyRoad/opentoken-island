@@ -6,6 +6,7 @@ const { execFile } = require("child_process");
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
 const OPENTOKEN = process.env.OPENTOKEN_BIN || "/Users/yangguangxiaolaohu/.local/bin/opentoken";
+const CONFIG_PATH = path.join(process.env.HOME || "/Users/yangguangxiaolaohu", ".opentoken", "config.json");
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -71,6 +72,29 @@ function summarize(rows) {
   };
 }
 
+function accountStatus() {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    const webhook = String(config.webhook_url || "");
+    const match = webhook.match(/\/u\/([^/?#]+)/);
+    const accountId = match ? match[1] : "";
+    return {
+      connected: Boolean(webhook),
+      accountId: accountId ? `${accountId.slice(0, 8)}...${accountId.slice(-6)}` : "",
+      host: webhook ? new URL(webhook).host : "",
+      configPath: CONFIG_PATH,
+    };
+  } catch (error) {
+    return {
+      connected: false,
+      accountId: "",
+      host: "",
+      configPath: CONFIG_PATH,
+      error: error.message,
+    };
+  }
+}
+
 async function handleApi(req, res, url) {
   if (url.pathname === "/api/summary") {
     const since = url.searchParams.get("since") || todayLocal();
@@ -78,7 +102,7 @@ async function handleApi(req, res, url) {
     if (!result.ok) return json(res, 500, { ok: false, error: result.stderr || result.message });
     try {
       const rows = JSON.parse(result.stdout);
-      return json(res, 200, { ok: true, ...summarize(rows), service: await serviceStatus() });
+      return json(res, 200, { ok: true, ...summarize(rows), account: accountStatus(), service: await serviceStatus() });
     } catch (error) {
       return json(res, 500, { ok: false, error: `Invalid opentoken JSON: ${error.message}` });
     }
@@ -91,12 +115,13 @@ async function handleApi(req, res, url) {
     return json(res, result.ok ? 200 : 500, {
       ok: result.ok,
       output: (result.stdout || result.stderr || result.message).trim(),
+      account: accountStatus(),
       service: await serviceStatus(),
     });
   }
 
   if (url.pathname === "/api/service") {
-    return json(res, 200, { ok: true, service: await serviceStatus() });
+    return json(res, 200, { ok: true, account: accountStatus(), service: await serviceStatus() });
   }
 
   return json(res, 404, { ok: false, error: "Not found" });
