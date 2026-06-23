@@ -83,6 +83,15 @@ async function waitForServer(port) {
   throw lastError || new Error(`server did not start on ${port}`);
 }
 
+async function waitUntil(predicate, timeoutMs = 1000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("condition was not met in time");
+}
+
 async function startIslandServer(t, options = {}) {
   const parent = tempDir("runtime");
   const root = copyRuntimeRoot(parent);
@@ -262,6 +271,122 @@ test("concurrent upload proxy writes coherent lastUpload records", async (t) => 
   const upstreamBody = JSON.parse(state.lastUpload.upstream.body);
   assert.equal(state.lastUpload.payload.requestId, "B");
   assert.equal(state.lastUpload.payload.requestId, upstreamBody.requestId);
+});
+
+test("upload proxy queues a local refresh event after capturing payload", async (t) => {
+  const upstream = await startFakeUpstream(t);
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      webhook_url: `http://127.0.0.1:${upstream.port}/tokenrank/api/subapp/u/account`,
+    })
+  );
+  const { port } = await startIslandServer(t, { home });
+
+  const before = JSON.parse((await request(port, { path: "/api/island-event" })).body).event;
+  await request(port, {
+    path: "/tokenrank/api/subapp/u/account",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ rows: [] }),
+  });
+  const after = JSON.parse((await request(port, { path: "/api/island-event" })).body).event;
+
+  assert.ok(after.id > before.id);
+  assert.equal(after.reason, "upload-captured");
+  assert.equal(after.showIsland, false);
+});
+
+test("upload proxy queues the local refresh event before upstream responds", async (t) => {
+  const upstream = await startFakeUpstream(t);
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      webhook_url: `http://127.0.0.1:${upstream.port}/tokenrank/api/subapp/u/account`,
+    })
+  );
+  const { port } = await startIslandServer(t, { home });
+
+  const before = JSON.parse((await request(port, { path: "/api/island-event" })).body).event;
+  const upload = request(port, {
+    path: "/tokenrank/api/subapp/u/account",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requestId: "A",
+      rows: [{ date: "2026-06-23", tool: "codex", input: 10, normalized: 10 }],
+    }),
+  });
+
+  await waitUntil(() => upstream.requests.length === 1);
+  const duringUpstreamWait = JSON.parse((await request(port, { path: "/api/island-event" })).body).event;
+  assert.ok(duringUpstreamWait.id > before.id);
+  assert.equal(duringUpstreamWait.reason, "upload-captured");
+  assert.equal(duringUpstreamWait.showIsland, false);
+
+  await upload;
+});
+
+test("capturing a new upload stops serving a stale leaderboard snapshot", async (t) => {
+  const upstream = await startFakeUpstream(t);
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      webhook_url: `http://127.0.0.1:${upstream.port}/tokenrank/api/subapp/u/account`,
+    })
+  );
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: {
+        uploadId: "old-upload",
+        capturedAt: "2026-06-23T11:59:00.000Z",
+        summary: {
+          date: "2026-06-23",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+      },
+      leaderboard: {
+        uploadId: "old-upload",
+        updatedAt: "2026-06-23T11:59:01.000Z",
+        own: { userId: "me", rank: 1, score: 100, byTool: { codex: 100 } },
+        gapToPrevious: 0,
+        leadOverNext: 50,
+        rankDelta: 0,
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, { home });
+
+  const upload = request(port, {
+    path: "/tokenrank/api/subapp/u/account",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requestId: "A",
+      rows: [{ date: "2026-06-23", tool: "codex", input: 10, normalized: 10 }],
+    }),
+  });
+
+  await waitUntil(() => upstream.requests.length === 1);
+  const summary = JSON.parse((await request(port, { path: "/api/summary" })).body);
+  assert.equal(summary.source, "upload");
+  assert.equal(summary.total, 10);
+  assert.equal(summary.rank, null);
+
+  await upload;
 });
 
 test("upload proxy rejects oversized request bodies", async (t) => {

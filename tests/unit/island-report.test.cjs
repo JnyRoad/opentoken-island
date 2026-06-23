@@ -146,6 +146,23 @@ test("缺少 own 时返回 default 且 metric 为占位", () => {
   assert.equal(report.metric, "#--");
 });
 
+test("本地预计排名时返回等待确认文案，不当成已确认榜首", () => {
+  const report = buildBattleReport({
+    estimated: true,
+    own: { rank: 1, score: 40_000_000, name: "我", estimated: true },
+    previous: null,
+    next: { name: "Alice", score: 20_000_000 },
+    gapToPrevious: 0,
+    leadOverNext: 20_000_000,
+    rankDelta: 0,
+  });
+  assert.equal(report.type, "default");
+  assert.equal(report.metric, "#1");
+  assert.match(report.title, /预计/);
+  assert.match(report.copy, /等待榜单确认/);
+  assert.doesNotMatch(report.title, /守住/);
+});
+
 // 9) 边界：own.score 为 0 时不得触发 soon/defense（占比计算会除零，且语义无意义）。
 test("own.score=0 时不触发 soon/defense，落到 default", () => {
   const report = buildBattleReport({

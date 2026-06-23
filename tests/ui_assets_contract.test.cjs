@@ -49,3 +49,50 @@ test("mac app bundle includes the full assets directory", () => {
   assert.match(installScript, /cp -R "\$\{ROOT_DIR\}\/assets"/);
   assert.doesNotMatch(installScript, /Resources\/assets\/scys\/icon_topnav\.png/);
 });
+
+test("popover constrains quest icons so artwork cannot cover copy", () => {
+  const html = read("popover.html");
+  assert.match(html, /\.quest svg\{width:18px;height:18px/);
+  assert.match(html, /\.quest\s*\{/);
+  assert.doesNotMatch(html, /\.quest svg\{width:\s*100%/);
+});
+
+test("popover refreshes when upload events arrive and after manual upload", () => {
+  const html = read("popover.html");
+  assert.match(html, /window\.OpenTokenIslandRefresh\s*=/);
+  assert.match(html, /pollIslandEvent/);
+  assert.match(html, /setInterval\(pollIslandEvent,\s*2000\)/);
+  assert.match(html, /waitForFreshSummary/);
+});
+
+test("manual popover upload stops waiting when the upload command fails", () => {
+  const html = read("popover.html");
+  assert.match(html, /!response\.ok \|\| !result \|\| result\.ok === false/);
+  assert.match(html, /Upload failed; check logs/);
+});
+
+test("popover labels estimated ranks instead of treating them as confirmed", () => {
+  const html = read("popover.html");
+  assert.match(html, /data\.rankEstimated/);
+  assert.match(html, /预计排名/);
+  assert.match(html, /等待榜单确认/);
+});
+
+test("native status event refreshes the open popover webview", () => {
+  const swift = read("OpenTokenIsland.swift");
+  assert.match(swift, /private var popoverWebView: WKWebView\?/);
+  assert.match(swift, /refreshPopoverContent\(\)/);
+  assert.match(swift, /evaluateJavaScript\("window\.OpenTokenIslandRefresh/);
+});
+
+test("native upload-captured events refresh without forcing an island popup", () => {
+  const swift = read("OpenTokenIsland.swift");
+  assert.match(swift, /let showIsland = event\["showIsland"\] as\? Bool \?\? true/);
+  assert.match(swift, /if showIsland \{\s*self\.showIsland/);
+});
+
+test("island banner labels estimated ranks as pending confirmation", () => {
+  const html = read("island.html");
+  assert.match(html, /data\.rankEstimated/);
+  assert.match(html, /等待榜单确认/);
+});

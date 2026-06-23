@@ -19,6 +19,10 @@ test("summarizeRows uses the latest date and aggregates raw token counts by tool
       codex: 275,
       gemini: 100,
     },
+    normalizedByTool: {
+      codex: 0,
+      gemini: 120,
+    },
     rowCount: 2,
   });
 });

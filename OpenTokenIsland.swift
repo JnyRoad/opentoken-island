@@ -4,6 +4,7 @@ import WebKit
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
+    private var popoverWebView: WKWebView?
     private var islandWindow: NSPanel?
     private var serverProcess: Process?
     private var timer: Timer?
@@ -69,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private func setupPopover() {
         let viewController = NSViewController()
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 430, height: 700))
+        popoverWebView = webView
         webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
         viewController.view = webView
@@ -209,11 +211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             updateStatusTitle()
+            refreshPopoverContent()
         }
     }
 
     @objc private func refreshNow() {
         updateStatusTitle()
+        refreshPopoverContent()
         showIsland(reason: "refresh-menu")
     }
 
@@ -230,6 +234,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         statusItem.menu = contextMenu
         button.performClick(nil)
         statusItem.menu = nil
+    }
+
+    private func refreshPopoverContent() {
+        guard popover.isShown else { return }
+        popoverWebView?.evaluateJavaScript("window.OpenTokenIslandRefresh && window.OpenTokenIslandRefresh()")
     }
 
     private func updateStatusTitle() {
@@ -270,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
             let id = (event["id"] as? NSNumber)?.int64Value ?? 0
             let reason = event["reason"] as? String ?? "unknown"
+            let showIsland = event["showIsland"] as? Bool ?? true
 
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -283,7 +293,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 guard id > self.lastIslandEventId else { return }
                 self.lastIslandEventId = id
                 self.logIsland("event detected id=\(id) reason=\(reason)")
-                self.showIsland(reason: "event:\(reason)")
+                self.updateStatusTitle()
+                self.refreshPopoverContent()
+                if showIsland {
+                    self.showIsland(reason: "event:\(reason)")
+                }
             }
         }.resume()
     }
