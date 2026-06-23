@@ -7,6 +7,7 @@ APP_DIR="${APP_DIR:-/Applications/${APP_NAME}.app}"
 BUILD_DIR="${ROOT_DIR}/build"
 BUILD_APP="${BUILD_DIR}/${APP_NAME}.app"
 PORT="${OPENTOKEN_ISLAND_PORT:-4174}"
+UPLOAD_TIMEOUT_MS="${OPENTOKEN_ISLAND_UPLOAD_TIMEOUT_MS:-60000}"
 CONFIG_PATH="${HOME}/.opentoken/config.json"
 STATE_PATH="${HOME}/.opentoken/island-state.json"
 LAUNCH_AGENT_PATH="${HOME}/Library/LaunchAgents/com.opentoken.island.plist"
@@ -334,6 +335,90 @@ PLIST
   launchctl enable "gui/$(id -u)/com.opentoken.island"
 }
 
+wait_for_local_api() {
+  local node_bin="$1"
+  "${node_bin}" - "http://127.0.0.1:${PORT}/api/health" <<'NODE'
+const http = require("http");
+
+const healthUrl = process.argv[2];
+const deadline = Date.now() + 15000;
+const intervalMs = 300;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function probe() {
+  return new Promise((resolve) => {
+    const request = http.get(healthUrl, { timeout: 1000 }, (response) => {
+      response.resume();
+      resolve(response.statusCode >= 200 && response.statusCode < 300);
+    });
+    request.on("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.on("error", () => resolve(false));
+  });
+}
+
+async function waitUntilReady() {
+  while (Date.now() < deadline) {
+    if (await probe()) return true;
+    await delay(intervalMs);
+  }
+  return false;
+}
+
+waitUntilReady().then((ready) => {
+  process.exit(ready ? 0 : 1);
+});
+NODE
+}
+
+prime_initial_upload() {
+  local opentoken_bin="$1"
+  local node_bin="$2"
+  printf 'Initial upload: '
+  if "${node_bin}" - "${opentoken_bin}" "${UPLOAD_TIMEOUT_MS}" <<'NODE'
+const { spawn } = require("child_process");
+
+const [opentokenBin, timeoutMsRaw] = process.argv.slice(2);
+const timeoutMs = Number(timeoutMsRaw);
+
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  process.exit(1);
+}
+
+const upload = spawn(opentokenBin, ["upload"], { stdio: "ignore" });
+let finished = false;
+
+function finish(code) {
+  if (finished) return;
+  finished = true;
+  clearTimeout(timer);
+  process.exit(code);
+}
+
+const timer = setTimeout(() => {
+  if (finished) return;
+  upload.kill("SIGTERM");
+  setTimeout(() => upload.kill("SIGKILL"), 2000).unref();
+}, timeoutMs);
+timer.unref();
+
+upload.on("error", () => finish(1));
+upload.on("exit", (code) => finish(code === 0 ? 0 : 1));
+NODE
+  then
+    printf 'captured\n'
+    return 0
+  fi
+
+  printf 'failed; click Upload now or wait for the next daemon upload.\n'
+  return 0
+}
+
 main() {
   need_command swiftc
   need_command node
@@ -351,7 +436,12 @@ main() {
   install_launch_agent
 
   open -g "${APP_DIR}"
-  sleep 2
+
+  if wait_for_local_api "${node_bin}"; then
+    prime_initial_upload "${opentoken_bin}" "${node_bin}"
+  else
+    printf 'Initial upload: local API was not ready; click Upload now or wait for the next daemon upload.\n'
+  fi
 
   printf '\nInstalled %s\n' "${APP_DIR}"
   printf 'LaunchAgent: %s\n' "${LAUNCH_AGENT_PATH}"
