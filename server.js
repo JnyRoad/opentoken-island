@@ -96,11 +96,13 @@ function logIslandEvent(message, details = {}) {
   fs.appendFileSync(EVENT_LOG_PATH, `${line}\n`);
 }
 
-function queueIslandEvent(reason = "manual") {
+function queueIslandEvent(reason = "manual", { showIsland = true } = {}) {
+  const previousId = Number(state.islandEvent?.id || 0);
   const event = {
-    id: Date.now(),
+    id: Math.max(Date.now(), previousId + 1),
     createdAt: new Date().toISOString(),
     reason,
+    showIsland,
   };
   state.islandEvent = event;
   saveState();
@@ -321,12 +323,12 @@ async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
     const result = await requestText("GET", endpoint, "", { accept: "application/json" });
     lastResult = result;
     const entries = Array.isArray(result.json?.entries) ? result.json.entries : [];
-    const board = computeLeaderboard(entries, summary, previousRank, state.userId);
+    const board = computeLeaderboard(entries, summary, previousRank, state.userId, { limit: LEADERBOARD_LIMIT });
 
     if (board) {
-      const leaderboard = { updatedAt: new Date().toISOString(), ...board };
+      const leaderboard = { updatedAt: new Date().toISOString(), uploadId, ...board };
       if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;
-      state.userId = board.own.userId;
+      if (board.own.userId) state.userId = board.own.userId;
       saveState();
       return state.leaderboard;
     }
@@ -338,6 +340,7 @@ async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
     updatedAt: new Date().toISOString(),
     board: "total",
     range: "today",
+    uploadId,
     entriesCount: Array.isArray(lastResult?.json?.entries) ? lastResult.json.entries.length : 0,
     error: lastResult?.error || "Current upload was not found in leaderboard yet",
   };
@@ -389,6 +392,7 @@ async function handleUploadProxy(req, res, url) {
     summary,
   };
   state.lastUpload = uploadRecord;
+  state.leaderboard = null;
   saveState();
   logIslandEvent("captured upload payload", {
     path: redactedPath,
@@ -396,6 +400,9 @@ async function handleUploadProxy(req, res, url) {
     total: summary.total,
     rowCount: summary.rowCount,
   });
+  if (isCurrentUpload(state, uploadId)) {
+    queueIslandEvent("upload-captured", { showIsland: false });
+  }
 
   const upstream = await requestText("POST", upstreamUrl, body, {
     "content-type": req.headers["content-type"] || "application/json",
@@ -421,6 +428,7 @@ async function handleUploadProxy(req, res, url) {
     const leaderboard = await refreshLeaderboard(summary, previousRank, uploadId);
     logIslandEvent("refreshed leaderboard", {
       rank: leaderboard?.own?.rank ?? null,
+      estimated: Boolean(leaderboard?.estimated || leaderboard?.own?.estimated),
       gapToPrevious: leaderboard?.gapToPrevious ?? null,
       leadOverNext: leaderboard?.leadOverNext ?? null,
     });

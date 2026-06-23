@@ -66,8 +66,8 @@
       // 战报左侧图标随类型变化（lucide）；report 缺失时回退到默认 award 图标。
       iconEl.innerHTML = `<i data-lucide="${report.icon || 'award'}"></i>`;
       if (window.lucide) lucide.createIcons();
-      titleEl.textContent = report.title || `今日 ${data.totalLabel || '--'} token`;
-      copyEl.textContent = report.copy || '';
+      titleEl.textContent = report.title || (data.rankEstimated ? `预计 ${data.rankLabel || '#--'}` : `今日 ${data.totalLabel || '--'} token`);
+      copyEl.textContent = report.copy || (data.rankEstimated ? '等待榜单确认' : '');
       metricEl.textContent = report.metric || data.rankLabel || '#--';
       metaEl.textContent = game.mainTool ? game.mainTool.label : 'live';
       trackFillEl.style.width = Math.max(4, game.xpPct || 0) + '%';
