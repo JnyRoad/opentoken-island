@@ -100,8 +100,11 @@ buildSummary({ lastUpload, leaderboard }) -> summary  // 原读全局 state, 改
 
 | 触发条件 | 旧行为 | 新行为 | 理由 |
 |---|---|---|---|
-| `~/.opentoken/island-state.json` JSON 损坏 | 启动静默重置为 `{}`（丢 userId/榜单） | 启动**抛错拒绝运行** | 快速失败，避免静默数据丢失 |
-| `~/.opentoken/config.json` JSON 损坏 | 请求路径静默当 `{}` | 触达 `readConfig` 的请求**抛错** | 同上；损坏配置本就是坏状态 |
+| `~/.opentoken/island-state.json` JSON 损坏 | 启动静默重置为 `{}` | 启动**警告(stderr) + 回退 `{}`** | state 是服务自写的可重建缓存；截断写不该让 app 开不了机；警告满足"非静默" |
+| `~/.opentoken/config.json` JSON 损坏 | 请求路径静默当 `{}` | 触达 `readConfig` 的请求**抛错** | config 是用户手写的关键配置，解析失败必须暴露 |
+| 任一文件为空（中断写产物） | 抛错被吞 → `{}` | 显式视为 `{}` | 空文件不是"损坏 JSON" |
+
+**为何 state 与 config 不对称**（code review 反馈采纳）：state 文件丢失=下次上传即可重建的缓存损失，把它的损坏升级成"宕机"得不偿失；config 文件是 webhook 等关键用户输入，错了就该 fast-fail。两者都**不静默**：state 走响亮 stderr 警告，config 走抛错。
 
 文件缺失（首次运行）行为**不变**：仍返回 `{}`。Happy-path（文件合法 JSON，本服务自己写的）行为**完全不变**。
 

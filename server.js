@@ -29,7 +29,7 @@ const mime = {
 let state = loadState();
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
-function parseJsonFileOrEmpty(filePath) {
+function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false } = {}) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -37,15 +37,23 @@ function parseJsonFileOrEmpty(filePath) {
     if (error.code === "ENOENT") return {};
     throw error; // EACCES and other IO problems are real — surface them
   }
+  if (raw.trim() === "") return {}; // empty file (e.g. interrupted write) is not corruption
   try {
     return JSON.parse(raw);
   } catch (error) {
+    if (tolerateCorruption) {
+      // The state file is a server-owned, rebuildable cache. A truncated write must
+      // not brick startup — warn loudly (never silent) and fall back to empty.
+      console.warn(`[server] ignoring corrupt JSON at ${filePath}, using empty state: ${error.message}`);
+      return {};
+    }
     throw new Error(`Failed to parse JSON at ${filePath}: ${error.message}`);
   }
 }
 
+// State is a rebuildable cache → tolerate corruption (warn + reset).
 function loadState() {
-  return parseJsonFileOrEmpty(STATE_PATH);
+  return parseJsonFileOrEmpty(STATE_PATH, { tolerateCorruption: true });
 }
 
 function findOpenTokenBinary() {

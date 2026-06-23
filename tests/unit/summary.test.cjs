@@ -79,6 +79,41 @@ test("computeLeaderboard returns null when own not found", () => {
   assert.equal(computeLeaderboard(entries, { total: 1, byTool: {} }, null, "nobody"), null);
 });
 
+test("computeLeaderboard rank 1 has no previous and zero gap", () => {
+  const entries = [
+    { userId: "me", rank: 1, score: 300, name: "Me" },
+    { userId: "b", rank: 2, score: 100, name: "B" },
+  ];
+  const board = computeLeaderboard(entries, { total: 300, byTool: {} }, 1, "me");
+  assert.equal(board.previous, null);
+  assert.equal(board.gapToPrevious, 0);
+  assert.equal(board.leadOverNext, 200);
+});
+
+test("summarizeRows on empty rows yields zeros and empty date", () => {
+  const s = summarizeRows([]);
+  assert.equal(s.date, "");
+  assert.equal(s.total, 0);
+  assert.equal(s.rowCount, 0);
+  assert.deepEqual(s.byTool, {});
+});
+
+test("toolsFromMap on empty map returns []", () => {
+  assert.deepEqual(toolsFromMap({}), []);
+});
+
+test("buildSummary uses upload source when no leaderboard own", () => {
+  const s = buildSummary({
+    lastUpload: { summary: { date: "2026-06-23", total: 50, byTool: { codex: 50 } }, capturedAt: "c" },
+    leaderboard: null,
+  });
+  assert.equal(s.source, "upload");
+  assert.equal(s.waiting, false);
+  assert.equal(s.total, 50);
+  assert.equal(s.rank, null);
+  assert.equal(s.totalLabel, "50");
+});
+
 test("buildSummary waiting state when no upload", () => {
   const s = buildSummary({ lastUpload: null, leaderboard: null });
   assert.equal(s.waiting, true);

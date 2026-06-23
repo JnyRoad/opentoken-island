@@ -9,6 +9,12 @@ test("rankedTools sorts desc and computes share", () => {
   assert.equal(ranked[1].name, "codex");
 });
 
+test("rankedTools with total 0 yields share 0 (no divide-by-zero)", () => {
+  const ranked = rankedTools({ codex: 0, gemini: 0 }, 0);
+  assert.equal(ranked[0].share, 0);
+  assert.ok(Number.isFinite(ranked[0].share));
+});
+
 test("buildGame computes level and xp from total", () => {
   const game = buildGame({
     total: 30_000_000, rank: 5, rankDelta: 0,

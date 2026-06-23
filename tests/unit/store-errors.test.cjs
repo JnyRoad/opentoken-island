@@ -29,3 +29,23 @@ test("parses valid JSON", () => {
     fs.unlinkSync(good);
   }
 });
+
+test("treats an empty file as {} (interrupted write), not corruption", () => {
+  const empty = path.join(os.tmpdir(), "empty-" + process.pid + ".json");
+  fs.writeFileSync(empty, "   \n");
+  try {
+    assert.deepEqual(parseJsonFileOrEmpty(empty), {});
+  } finally {
+    fs.unlinkSync(empty);
+  }
+});
+
+test("tolerateCorruption returns {} instead of throwing on bad JSON", () => {
+  const bad = path.join(os.tmpdir(), "tolerate-" + process.pid + ".json");
+  fs.writeFileSync(bad, "{not json");
+  try {
+    assert.deepEqual(parseJsonFileOrEmpty(bad, { tolerateCorruption: true }), {});
+  } finally {
+    fs.unlinkSync(bad);
+  }
+});
