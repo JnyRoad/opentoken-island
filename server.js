@@ -6,6 +6,7 @@ const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
+const { buildBattleReport } = require("./lib/island-report");
 const {
   corsHeaders: localCorsHeaders,
   requireTrustedOrigin: requireLocalTrustedOrigin,
@@ -423,6 +424,17 @@ async function handleUploadProxy(req, res, url) {
       gapToPrevious: leaderboard?.gapToPrevious ?? null,
       leadOverNext: leaderboard?.leadOverNext ?? null,
     });
+
+    // 战报不缓存：弹窗触发只看「这次上传是否产生了值得报的变化」。
+    // 灵动岛展示时由 buildSummary 用当前榜单实时计算，避免显示陈旧战报（与实时排名脱节）。
+    const report = buildBattleReport(leaderboard);
+    logIslandEvent("built battle report", { type: report.type, title: report.title });
+
+    // 纯服务端事件驱动：只有「值得报」的战报（非 default）才排队弹窗，
+    // 守榜/无变化（default）不打扰用户。弹不弹由这里单点决定，Swift 只管「有新事件就显示」。
+    if (report.type !== "default") {
+      queueIslandEvent(report.type);
+    }
   }
 
   res.writeHead(upstream.status || 502, {
