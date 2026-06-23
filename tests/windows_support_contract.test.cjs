@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, "..");
 const readJson = (file) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
 
 const pkg = readJson("package.json");
-assert.equal(pkg.scripts.test, "node tests/windows_support_contract.test.cjs");
+assert.equal(pkg.scripts.test, "node tests/run_all.cjs");
 assert.equal(pkg.scripts["tauri:dev"], "tauri dev");
 assert.equal(pkg.scripts["tauri:build"], "tauri build");
 assert.equal(pkg.devDependencies["@tauri-apps/cli"], "^2.11.3");
