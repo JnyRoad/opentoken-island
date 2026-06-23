@@ -276,7 +276,18 @@ SWIFT
   sips -z 512 512 "${source_icon}" --out "${iconset}/icon_256x256@2x.png" >/dev/null
   sips -z 512 512 "${source_icon}" --out "${iconset}/icon_512x512.png" >/dev/null
   sips -z 1024 1024 "${source_icon}" --out "${iconset}/icon_512x512@2x.png" >/dev/null
-  iconutil -c icns "${iconset}" -o "${output_icon}"
+  if iconutil -c icns "${iconset}" -o "${output_icon}"; then
+    return 0
+  fi
+
+  local installed_icon="/Applications/OpenToken Island.app/Contents/Resources/OpenTokenIslandBrand.icns"
+  if [[ -f "${installed_icon}" ]]; then
+    cp "${installed_icon}" "${output_icon}"
+    printf 'warning: iconutil rejected generated iconset; reused installed app icon.\n' >&2
+    return 0
+  fi
+
+  printf 'warning: iconutil rejected generated iconset; continuing without a custom app icon.\n' >&2
 }
 
 build_app() {
