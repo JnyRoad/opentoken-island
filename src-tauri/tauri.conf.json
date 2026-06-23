@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenToken Island",
+  "version": "0.1.0",
+  "identifier": "com.opentoken.island.windows",
+  "build": {
+    "frontendDist": "../."
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": []
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.png"],
+    "resources": ["../server.js", "../assets"]
+  }
+}
