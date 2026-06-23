@@ -16,14 +16,16 @@ assert.equal(config.identifier, "com.opentoken.island.windows");
 assert.equal(config.productName, "OpenToken Island");
 assert.equal(config.build.frontendDist, "../desktop-placeholder");
 assert.equal(config.app.withGlobalTauri, false);
+assert.equal(config.app.macOSPrivateApi, true);
 assert.deepEqual(config.bundle.targets, ["nsis"]);
 assert.ok(config.bundle.icon.includes("icons/icon.png"));
 assert.ok(config.bundle.icon.includes("icons/icon.ico"));
+assert.ok(config.bundle.resources.includes("../lib"));
 assert.ok(fs.existsSync(path.join(root, "src-tauri/icons/icon.ico")));
 
 const cargoToml = fs.readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
 assert.match(cargoToml, /tauri = \{ version = "2"/);
-assert.match(cargoToml, /features = \["tray-icon", "image-png"\]/);
+assert.match(cargoToml, /features = \["tray-icon", "image-png", "macos-private-api"\]/);
 
 const mainRs = fs.readFileSync(path.join(root, "src-tauri/src/main.rs"), "utf8");
 const popoverHtml = fs.readFileSync(path.join(root, "popover.html"), "utf8");

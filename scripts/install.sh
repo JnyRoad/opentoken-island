@@ -281,7 +281,7 @@ SWIFT
 build_app() {
   rm -rf "${BUILD_APP}"
   mkdir -p "${BUILD_APP}/Contents/MacOS" \
-    "${BUILD_APP}/Contents/Resources/assets/scys"
+    "${BUILD_APP}/Contents/Resources"
 
   swiftc "${ROOT_DIR}/OpenTokenIsland.swift" -framework Cocoa -framework WebKit \
     -o "${BUILD_APP}/Contents/MacOS/${APP_NAME}"
@@ -290,8 +290,10 @@ build_app() {
     "${ROOT_DIR}/island.html" \
     "${ROOT_DIR}/server.js" \
     "${BUILD_APP}/Contents/Resources/"
-  cp "${ROOT_DIR}/assets/scys/icon_topnav.png" \
-    "${BUILD_APP}/Contents/Resources/assets/scys/icon_topnav.png"
+  cp -R "${ROOT_DIR}/lib" \
+    "${BUILD_APP}/Contents/Resources/lib"
+  cp -R "${ROOT_DIR}/assets" \
+    "${BUILD_APP}/Contents/Resources/assets"
   build_app_icon
   write_info_plist
 }
@@ -358,7 +360,7 @@ main() {
   if "${opentoken_bin}" service status >/dev/null 2>&1; then
     printf 'OpenToken daemon: running or installed\n'
   else
-    printf 'OpenToken daemon: status check failed; run `opentoken service status` if uploads do not arrive.\n'
+    printf "OpenToken daemon: status check failed; run \`opentoken service status\` if uploads do not arrive.\n"
   fi
 }
 
