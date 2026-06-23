@@ -1,4 +1,7 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod windows_support;
 
@@ -7,31 +10,46 @@ use std::{
     io::{Error as IoError, ErrorKind},
     path::{Path, PathBuf},
     process::{Child, Command},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
+    time::Duration,
 };
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Manager, PhysicalPosition, Position, Rect, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 use windows_support::{
-    is_port_open, local_url, opentoken_bin, server_resource_path, DEFAULT_PORT,
+    floating_window_origin, is_port_open, local_url, opentoken_bin, server_resource_path,
+    DEFAULT_PORT,
 };
 
+const PANEL_LABEL: &str = "panel";
+const ISLAND_LABEL: &str = "island";
+const ISLAND_WIDTH: i32 = 560;
+const ISLAND_HEIGHT: i32 = 118;
+const FLOATING_MARGIN: i32 = 12;
+
 struct ServerProcess(Mutex<Option<Child>>);
+struct HoverState(AtomicU64);
 
 fn main() {
     tauri::Builder::default()
         .manage(ServerProcess(Mutex::new(None)))
+        .manage(HoverState(AtomicU64::new(0)))
         .setup(|app| {
             start_server_if_needed(app.handle())?;
+            prewarm_windows(app.handle())?;
             setup_tray(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "panel" {
+                if matches!(window.label(), PANEL_LABEL | ISLAND_LABEL) {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -54,8 +72,10 @@ fn main() {
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let open_panel = MenuItem::with_id(app, "open-panel", "Open Panel", true, None::<&str>)?;
-    let show_island_item = MenuItem::with_id(app, "show-island", "Show Island", true, None::<&str>)?;
-    let open_browser = MenuItem::with_id(app, "open-browser", "Open Browser UI", true, None::<&str>)?;
+    let show_island_item =
+        MenuItem::with_id(app, "show-island", "Show Island", true, None::<&str>)?;
+    let open_browser =
+        MenuItem::with_id(app, "open-browser", "Open Browser UI", true, None::<&str>)?;
     let open_logs = MenuItem::with_id(app, "open-logs", "Open Logs", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit OpenToken Island", true, None::<&str>)?;
@@ -74,7 +94,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id("opentoken-island")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("OpenToken Island")
+        .tooltip("OpenToken Island - hover for today's quota")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open-panel" => {
                 let _ = show_panel(app);
@@ -92,13 +112,24 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let _ = show_panel(&tray.app_handle());
+            let app = tray.app_handle();
+            match event {
+                TrayIconEvent::Enter { position, rect, .. }
+                | TrayIconEvent::Move { position, rect, .. } => {
+                    let _ = show_hover_island(&app, position, rect);
+                }
+                TrayIconEvent::Leave { .. } => {
+                    schedule_hide_island(&app, Duration::from_millis(900));
+                }
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let _ = hide_island(&app);
+                    let _ = show_panel(&app);
+                }
+                _ => {}
             }
         });
 
@@ -147,48 +178,160 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
         }
     }
 
+    wait_for_server(DEFAULT_PORT, Duration::from_secs(3))?;
+    Ok(())
+}
+
+fn wait_for_server(port: u16, timeout: Duration) -> tauri::Result<()> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if is_port_open(port) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(tauri::Error::Io(IoError::new(
+        ErrorKind::TimedOut,
+        format!("OpenToken Island server did not become ready on port {port}"),
+    )))
+}
+
+fn prewarm_windows(app: &AppHandle) -> tauri::Result<()> {
+    let _ = ensure_panel_window(app)?;
+    let _ = ensure_island_window(app)?;
     Ok(())
 }
 
 fn show_panel(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window("panel") {
-        window.show()?;
-        window.set_focus()?;
-        return Ok(());
-    }
-
-    let url = external_url("popover.html")?;
-    WebviewWindowBuilder::new(app, "panel", WebviewUrl::External(url))
-        .title("OpenToken Island")
-        .inner_size(430.0, 700.0)
-        .resizable(false)
-        .visible(true)
-        .build()?;
+    let window = ensure_panel_window(app)?;
+    window.show()?;
+    window.set_focus()?;
     Ok(())
 }
 
+fn ensure_panel_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(PANEL_LABEL) {
+        return Ok(window);
+    }
+
+    let url = external_url("popover.html")?;
+    WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
+        .title("OpenToken Island")
+        .inner_size(430.0, 700.0)
+        .resizable(false)
+        .visible(false)
+        .build()
+}
+
 fn show_island(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window("island") {
-        let _ = window.close();
+    let cursor = app
+        .cursor_position()
+        .unwrap_or_else(|_| PhysicalPosition::new(0.0, 0.0));
+    let window = ensure_island_window(app)?;
+    let (x, y) = floating_window_origin(
+        cursor.x.round() as i32,
+        cursor.y.round() as i32,
+        32,
+        32,
+        ISLAND_WIDTH,
+        ISLAND_HEIGHT,
+        FLOATING_MARGIN,
+    );
+    bump_hover_epoch(app);
+    window.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
+    window.show()?;
+    schedule_hide_island(app, Duration::from_secs(5));
+    Ok(())
+}
+
+fn show_hover_island(
+    app: &AppHandle,
+    cursor: PhysicalPosition<f64>,
+    rect: Rect,
+) -> tauri::Result<()> {
+    bump_hover_epoch(app);
+    let window = ensure_island_window(app)?;
+    let position = island_position(cursor, rect);
+    window.set_position(Position::Physical(position))?;
+    window.show()?;
+    Ok(())
+}
+
+fn island_position(cursor: PhysicalPosition<f64>, rect: Rect) -> PhysicalPosition<i32> {
+    let rect_position = rect.position.to_physical::<i32>(1.0);
+    let rect_size = rect.size.to_physical::<u32>(1.0);
+    let (tray_x, tray_y, tray_width, tray_height) = if rect_size.width == 0 || rect_size.height == 0
+    {
+        (cursor.x.round() as i32, cursor.y.round() as i32, 32, 32)
+    } else {
+        (
+            rect_position.x,
+            rect_position.y,
+            rect_size.width as i32,
+            rect_size.height as i32,
+        )
+    };
+
+    let (x, y) = floating_window_origin(
+        tray_x,
+        tray_y,
+        tray_width,
+        tray_height,
+        ISLAND_WIDTH,
+        ISLAND_HEIGHT,
+        FLOATING_MARGIN,
+    );
+    PhysicalPosition::new(x, y)
+}
+
+fn ensure_island_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(ISLAND_LABEL) {
+        return Ok(window);
     }
 
     let url = external_url("island.html")?;
-    let window = WebviewWindowBuilder::new(app, "island", WebviewUrl::External(url))
+    WebviewWindowBuilder::new(app, ISLAND_LABEL, WebviewUrl::External(url))
         .title("OpenToken Island")
         .inner_size(560.0, 118.0)
         .decorations(false)
+        .transparent(true)
+        .focusable(false)
         .resizable(false)
         .skip_taskbar(true)
         .always_on_top(true)
-        .visible(true)
-        .build()?;
+        .visible(false)
+        .build()
+}
 
-    let window_clone = window.clone();
+fn schedule_hide_island(app: &AppHandle, delay: Duration) {
+    let epoch = bump_hover_epoch(app);
+    let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        let _ = window_clone.close();
+        std::thread::sleep(delay);
+        if current_hover_epoch(&app) == epoch {
+            let _ = hide_island(&app);
+        }
     });
+}
+
+fn hide_island(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(ISLAND_LABEL) {
+        window.hide()?;
+    }
     Ok(())
+}
+
+fn bump_hover_epoch(app: &AppHandle) -> u64 {
+    app.try_state::<HoverState>()
+        .map(|state| state.0.fetch_add(1, Ordering::SeqCst) + 1)
+        .unwrap_or(0)
+}
+
+fn current_hover_epoch(app: &AppHandle) -> u64 {
+    app.try_state::<HoverState>()
+        .map(|state| state.0.load(Ordering::SeqCst))
+        .unwrap_or(0)
 }
 
 fn open_external(target: &str) -> std::io::Result<()> {

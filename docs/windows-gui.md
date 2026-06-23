@@ -28,11 +28,14 @@ npm run tauri:dev
 
 The tray icon appears in the Windows notification area.
 
-- Left click the tray icon to open the panel.
+- Hover the tray icon to show the compact quota island near the notification area.
+- Left click the tray icon to open the prewarmed detail panel.
 - Right click the tray icon to open the menu.
 - Use `Show Island` to display the compact notification window.
 - Use `Open Browser UI` to open `http://127.0.0.1:4174/popover.html`.
 - Use `Open Logs` to open `%USERPROFILE%\.opentoken\island-events.log`.
+
+The panel and island WebViews are created hidden during startup. That keeps the first hover/click responsive after the tray app is ready.
 
 If port `4174` is already open, the Tauri app reuses the existing local server. If the port is closed, it starts `server.js` with:
 
