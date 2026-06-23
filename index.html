@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenToken Island Prototypes</title>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="./assets/vendor/lucide-lite.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -1194,6 +1194,7 @@
     const uploadLabel = document.querySelector("#uploadLabel");
     const dailyQuestCopy = document.querySelector("#dailyQuestCopy");
     const API_BASE = `${window.location.origin}/api`;
+    let apiToken = "";
     let hideTimer;
 
     const events = {
@@ -1215,6 +1216,16 @@
 
     function refreshIcons() {
       if (window.lucide) window.lucide.createIcons();
+    }
+
+    async function loadClientConfig() {
+      const response = await fetch(`${API_BASE}/client-config`);
+      const data = await response.json();
+      apiToken = data.apiToken || "";
+    }
+
+    function tokenHeaders() {
+      return apiToken ? { "x-opentoken-island-token": apiToken } : {};
     }
 
     function showEvent(type) {
@@ -1241,6 +1252,36 @@
       uploadLabel.textContent = isLoading ? "Uploading..." : "Upload now";
     }
 
+    function clampPercent(value) {
+      const percent = Number(value);
+      if (!Number.isFinite(percent)) return 0;
+      return Math.max(0, Math.min(100, percent));
+    }
+
+    function renderTools(tools) {
+      const rows = (Array.isArray(tools) ? tools : []).map((tool) => {
+        const row = document.createElement("div");
+        const name = document.createElement("span");
+        const bar = document.createElement("span");
+        const fill = document.createElement("i");
+        const value = document.createElement("span");
+
+        row.className = "tool-row";
+        name.className = "tool-name";
+        bar.className = "bar";
+        value.className = "tool-value";
+
+        name.textContent = tool && tool.label ? String(tool.label) : "Unknown";
+        fill.style.width = `${clampPercent(tool && tool.pct)}%`;
+        value.textContent = tool && tool.valueLabel ? String(tool.valueLabel) : "0";
+
+        bar.appendChild(fill);
+        row.append(name, bar, value);
+        return row;
+      });
+      toolList.replaceChildren(...rows);
+    }
+
     function renderSummary(data) {
       if (!data || !data.ok) return;
       const rank = data.rank || 17;
@@ -1265,13 +1306,7 @@
         ? `Live data · ${data.date} · daemon running`
         : `Live data · ${data.date} · service status unknown`;
 
-      toolList.innerHTML = (data.tools || []).map((tool) => `
-        <div class="tool-row">
-          <span class="tool-name">${tool.label}</span>
-          <span class="bar"><i style="width: ${tool.pct}%"></i></span>
-          <span class="tool-value">${tool.valueLabel}</span>
-        </div>
-      `).join("");
+      renderTools(data.tools);
       refreshIcons();
     }
 
@@ -1315,7 +1350,10 @@
     uploadButton.addEventListener("click", async () => {
       setLoading(true);
       try {
-        const response = await fetch(`${API_BASE}/upload`, { method: "POST" });
+        const response = await fetch(`${API_BASE}/upload`, {
+          method: "POST",
+          headers: tokenHeaders()
+        });
         const data = await response.json();
         await loadSummary();
         events.achievement.copy = data.ok
@@ -1348,7 +1386,7 @@
     } else {
       setTimeout(() => showEvent(params.get("event") === "achievement" ? "achievement" : "rank"), 500);
     }
-    loadSummary();
+    loadClientConfig().finally(loadSummary);
     setInterval(loadSummary, 300000);
   </script>
 </body>

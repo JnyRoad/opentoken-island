@@ -1,10 +1,22 @@
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
+const {
+  corsHeaders: localCorsHeaders,
+  requireTrustedOrigin: requireLocalTrustedOrigin,
+  sendJson,
+} = require("./lib/http-security");
+const { createStaticFileHandler } = require("./lib/static-files");
+const {
+  applyLeaderboardForUpload,
+  applyUploadUpstream,
+  isCurrentUpload,
+} = require("./lib/upload-state");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
@@ -13,18 +25,12 @@ const CONFIG_PATH = path.join(HOME, ".opentoken", "config.json");
 const STATE_PATH = path.join(HOME, ".opentoken", "island-state.json");
 const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
+const MAX_UPLOAD_BODY_BYTES = 5 * 1024 * 1024;
 
 const LEADERBOARD_LIMIT = 500;
 const LEADERBOARD_MAX_ATTEMPTS = 4;
 const LEADERBOARD_RETRY_DELAY_MS = 900;
-
-const mime = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-};
+const serveStatic = createStaticFileHandler(ROOT);
 
 let state = loadState();
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
@@ -73,7 +79,9 @@ function findOpenTokenBinary() {
 
 function saveState() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+  const tempPath = `${STATE_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(state, null, 2) + "\n");
+  fs.renameSync(tempPath, STATE_PATH);
 }
 
 function logIslandEvent(message, details = {}) {
@@ -140,6 +148,11 @@ function ensureProxyConfig() {
   const current = String(config.webhook_url || "");
   let stateChanged = false;
 
+  if (!state.apiToken) {
+    state.apiToken = crypto.randomUUID();
+    stateChanged = true;
+  }
+
   if (!state.opentokenBin && OPENTOKEN !== "opentoken") {
     state.opentokenBin = OPENTOKEN;
     stateChanged = true;
@@ -174,6 +187,22 @@ function ensureProxyConfig() {
   };
 }
 
+function requireTrustedOrigin(req, res) {
+  return requireLocalTrustedOrigin(req, res, PORT);
+}
+
+function hasValidApiToken(req) {
+  ensureProxyConfig();
+  return Boolean(state.apiToken)
+    && String(req.headers["x-opentoken-island-token"] || "") === String(state.apiToken);
+}
+
+function requireApiToken(req, res) {
+  if (hasValidApiToken(req)) return true;
+  json(req, res, 403, { ok: false, error: "Invalid local client token" });
+  return false;
+}
+
 function run(cmd, args, timeout = 30000) {
   return new Promise((resolve) => {
     execFile(cmd, args, { timeout }, (error, stdout, stderr) => {
@@ -188,11 +217,43 @@ function run(cmd, args, timeout = 30000) {
   });
 }
 
-function readBody(req) {
-  return new Promise((resolve) => {
+function openPath(targetPath) {
+  const opener = process.platform === "win32"
+    ? { cmd: "cmd", args: ["/C", "start", "", targetPath] }
+    : process.platform === "darwin"
+      ? { cmd: "open", args: [targetPath] }
+      : { cmd: "xdg-open", args: [targetPath] };
+
+  return run(opener.cmd, opener.args, 15000).then((result) => ({
+    ok: result.ok,
+    output: result.ok ? "opened" : (result.stderr || result.message || "Could not open logs").trim(),
+  }));
+}
+
+function readBody(req, limit = MAX_UPLOAD_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
+    let total = 0;
+    let tooLarge = false;
+    req.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > limit) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      if (!tooLarge) chunks.push(chunk);
+    });
+    req.on("error", reject);
+    req.on("end", () => {
+      if (tooLarge) {
+        const error = new Error("Request body too large");
+        error.statusCode = 413;
+        reject(error);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
   });
 }
 
@@ -251,7 +312,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function refreshLeaderboard(summary, previousRank = null) {
+async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
   const endpoint = `https://scys.com/tokenrank/api/subapp/leaderboard?board=total&range=today&limit=${LEADERBOARD_LIMIT}`;
   let lastResult = null;
 
@@ -262,8 +323,9 @@ async function refreshLeaderboard(summary, previousRank = null) {
     const board = computeLeaderboard(entries, summary, previousRank, state.userId);
 
     if (board) {
+      const leaderboard = { updatedAt: new Date().toISOString(), ...board };
+      if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;
       state.userId = board.own.userId;
-      state.leaderboard = { updatedAt: new Date().toISOString(), ...board };
       saveState();
       return state.leaderboard;
     }
@@ -271,13 +333,14 @@ async function refreshLeaderboard(summary, previousRank = null) {
     if (attempt < LEADERBOARD_MAX_ATTEMPTS - 1) await sleep(LEADERBOARD_RETRY_DELAY_MS);
   }
 
-  state.leaderboard = {
+  const leaderboard = {
     updatedAt: new Date().toISOString(),
     board: "total",
     range: "today",
     entriesCount: Array.isArray(lastResult?.json?.entries) ? lastResult.json.entries.length : 0,
     error: lastResult?.error || "Current upload was not found in leaderboard yet",
   };
+  if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;
   saveState();
   return state.leaderboard;
 }
@@ -298,21 +361,33 @@ function accountStatus() {
 }
 
 async function handleUploadProxy(req, res, url) {
+  if (!requireTrustedOrigin(req, res)) return;
   const proxy = ensureProxyConfig();
   const upstreamUrl = proxy.upstreamUrl || `${DEFAULT_UPSTREAM_ORIGIN}${url.pathname}${url.search}`;
   const redactedPath = redactUploadPath(url.pathname);
-  const bodyBuffer = await readBody(req);
+  let bodyBuffer;
+  try {
+    bodyBuffer = await readBody(req);
+  } catch (error) {
+    return json(req, res, error.statusCode || 400, {
+      ok: false,
+      error: error.statusCode === 413 ? "Request body too large" : "Could not read request body",
+    });
+  }
   const body = bodyBuffer.toString("utf8");
   const payload = safeJson(body);
   const summary = summarizeRows(rowsFromPayload(payload));
   const previousRank = state.leaderboard?.own?.rank ? Number(state.leaderboard.own.rank) : null;
+  const uploadId = crypto.randomUUID();
 
-  state.lastUpload = {
+  const uploadRecord = {
+    uploadId,
     capturedAt: new Date().toISOString(),
     path: redactedPath,
     payload,
     summary,
   };
+  state.lastUpload = uploadRecord;
   saveState();
   logIslandEvent("captured upload payload", {
     path: redactedPath,
@@ -327,22 +402,22 @@ async function handleUploadProxy(req, res, url) {
     "user-agent": req.headers["user-agent"] || "opentoken-island/0.1",
   });
 
-  state.lastUpload.upstream = {
+  uploadRecord.upstream = {
     status: upstream.status,
     ok: upstream.ok,
     body: upstream.body,
     json: upstream.json,
     error: upstream.error || "",
   };
-  saveState();
+  if (applyUploadUpstream(state, { uploadId, uploadRecord })) saveState();
   logIslandEvent("forwarded upload upstream", {
     status: upstream.status,
     ok: upstream.ok,
     accepted: upstream.json?.accepted ?? null,
   });
 
-  if (upstream.ok && summary.total > 0) {
-    const leaderboard = await refreshLeaderboard(summary, previousRank);
+  if (upstream.ok && summary.total > 0 && isCurrentUpload(state, uploadId)) {
+    const leaderboard = await refreshLeaderboard(summary, previousRank, uploadId);
     logIslandEvent("refreshed leaderboard", {
       rank: leaderboard?.own?.rank ?? null,
       gapToPrevious: leaderboard?.gapToPrevious ?? null,
@@ -357,15 +432,32 @@ async function handleUploadProxy(req, res, url) {
 }
 
 async function handleApi(req, res, url) {
+  if (!requireTrustedOrigin(req, res)) return;
+
+  if (url.pathname === "/api/client-config") {
+    if (req.method !== "GET") return json(req, res, 405, { ok: false, error: "GET required" });
+    ensureProxyConfig();
+    return json(req, res, 200, {
+      ok: true,
+      apiToken: state.apiToken,
+    });
+  }
+
   if (url.pathname === "/api/island-event") {
-    return json(res, 200, { ok: true, event: currentIslandEvent() });
+    return json(req, res, 200, { ok: true, event: currentIslandEvent() });
+  }
+
+  if (url.pathname === "/api/health") {
+    if (req.method !== "GET") return json(req, res, 405, { ok: false, error: "GET required" });
+    return json(req, res, 200, { ok: true, name: "opentoken-island" });
   }
 
   if (url.pathname === "/api/debug/island") {
-    if (req.method !== "POST") return json(res, 405, { ok: false, error: "POST required" });
+    if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
+    if (!requireApiToken(req, res)) return;
     const reason = url.searchParams.get("reason") || "manual-debug";
     const event = queueIslandEvent(reason);
-    return json(res, 200, {
+    return json(req, res, 200, {
       ok: true,
       event,
       summary: buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
@@ -374,9 +466,11 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/summary") {
     if (url.searchParams.get("refresh") === "1" && state.lastUpload?.summary) {
-      await refreshLeaderboard(state.lastUpload.summary, state.leaderboard?.own?.rank || null);
+      if (!requireApiToken(req, res)) return;
+      const upload = state.lastUpload;
+      await refreshLeaderboard(upload.summary, state.leaderboard?.own?.rank || null, upload.uploadId || "");
     }
-    return json(res, 200, {
+    return json(req, res, 200, {
       ...buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
       account: accountStatus(),
       service: await serviceStatus(),
@@ -384,10 +478,11 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === "/api/upload") {
-    if (req.method !== "POST") return json(res, 405, { ok: false, error: "POST required" });
+    if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
+    if (!requireApiToken(req, res)) return;
     ensureProxyConfig();
     const result = await run(OPENTOKEN, ["upload"], 120000);
-    return json(res, result.ok ? 200 : 500, {
+    return json(req, res, result.ok ? 200 : 500, {
       ok: result.ok,
       output: (result.stdout || result.stderr || result.message).trim(),
       summary: buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
@@ -396,11 +491,23 @@ async function handleApi(req, res, url) {
     });
   }
 
-  if (url.pathname === "/api/service") {
-    return json(res, 200, { ok: true, account: accountStatus(), service: await serviceStatus() });
+  if (url.pathname === "/api/logs/open") {
+    if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
+    if (!requireApiToken(req, res)) return;
+    const result = await openPath(EVENT_LOG_PATH);
+    return json(req, res, result.ok ? 200 : 500, result);
   }
 
-  return json(res, 404, { ok: false, error: "Not found" });
+  if (url.pathname === "/api/service") {
+    return json(req, res, 200, {
+      ok: true,
+      name: "opentoken-island",
+      account: accountStatus(),
+      service: await serviceStatus(),
+    });
+  }
+
+  return json(req, res, 404, { ok: false, error: "Not found" });
 }
 
 async function serviceStatus() {
@@ -412,42 +519,22 @@ async function serviceStatus() {
   };
 }
 
-function json(res, status, body) {
-  res.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": "*",
-  });
-  res.end(JSON.stringify(body));
-}
-
-function serveStatic(req, res, url) {
-  const requested = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
-  const filePath = path.normalize(path.join(ROOT, requested));
-  if (!filePath.startsWith(ROOT)) {
-    res.writeHead(403);
-    return res.end("Forbidden");
-  }
-  fs.readFile(filePath, (error, data) => {
-    if (error) {
-      res.writeHead(404);
-      return res.end("Not found");
-    }
-    res.writeHead(200, { "content-type": mime[path.extname(filePath)] || "application/octet-stream" });
-    res.end(data);
-  });
+function json(req, res, status, body) {
+  sendJson(req, res, PORT, status, body);
 }
 
 const server = http.createServer((req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+
   if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "access-control-allow-origin": "*",
+    if (!requireTrustedOrigin(req, res)) return;
+    res.writeHead(204, localCorsHeaders(req, PORT, {
       "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-headers": "content-type",
-    });
+      "access-control-allow-headers": "content-type,x-opentoken-island-token",
+    }));
     return res.end();
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   if (req.method === "POST" && url.pathname.startsWith("/tokenrank/api/subapp/u/")) {
     return handleUploadProxy(req, res, url);
   }

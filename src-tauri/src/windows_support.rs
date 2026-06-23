@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,6 +21,30 @@ pub fn local_url(path: &str) -> String {
 pub fn is_port_open(port: u16) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+
+pub fn is_island_server_ready(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(250)) else {
+        return false;
+    };
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let request =
+        format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+
+    response.starts_with("HTTP/1.1 200")
+        && response.contains("\"ok\":true")
+        && response.contains("\"name\":\"opentoken-island\"")
 }
 
 #[cfg(test)]
@@ -117,20 +142,24 @@ pub fn floating_window_origin_bounded_with_anchor_gap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
 
     #[test]
     fn builds_default_opentoken_path() {
         let path = opentoken_bin(Path::new(r"C:\Users\ty"));
         assert_eq!(
             path,
-            PathBuf::from(r"C:\Users\ty\.opentoken\bin\opentoken.exe")
+            Path::new(r"C:\Users\ty")
+                .join(".opentoken")
+                .join("bin")
+                .join("opentoken.exe")
         );
     }
 
     #[test]
     fn builds_server_resource_path() {
         let path = server_resource_path(Path::new(r"C:\App\resources"));
-        assert_eq!(path, PathBuf::from(r"C:\App\resources\server.js"));
+        assert_eq!(path, Path::new(r"C:\App\resources").join("server.js"));
     }
 
     #[test]
@@ -148,6 +177,51 @@ mod tests {
     #[test]
     fn detects_closed_local_port() {
         assert!(!is_port_open(9));
+    }
+
+    #[test]
+    fn verifies_island_health_endpoint_instead_of_plain_open_port() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake local server");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\n\r\nok",
+                )
+                .expect("write fake response");
+        });
+
+        assert!(is_port_open(port));
+        assert!(!is_island_server_ready(port));
+        handle.join().expect("fake server thread");
+    }
+
+    #[test]
+    fn accepts_lightweight_island_health_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake local server");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0; 512];
+            let size = stream.read(&mut buffer).expect("read request");
+            let request = String::from_utf8_lossy(&buffer[..size]);
+            assert!(request.starts_with("GET /api/health HTTP/1.1"));
+            let body = "{\"ok\":true,\"name\":\"opentoken-island\"}";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write health response");
+        });
+
+        assert!(is_island_server_ready(port));
+        handle.join().expect("fake server thread");
     }
 
     #[test]

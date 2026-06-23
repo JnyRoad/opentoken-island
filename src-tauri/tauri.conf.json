@@ -8,12 +8,13 @@
   },
   "app": {
     "withGlobalTauri": false,
+    "macOSPrivateApi": true,
     "windows": []
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
-    "resources": ["../server.js", "../assets"]
+    "resources": ["../server.js", "../lib", "../assets"]
   }
 }

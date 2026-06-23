@@ -1,0 +1,51 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const root = path.resolve(__dirname, "..");
+
+function read(file) {
+  return fs.readFileSync(path.join(root, file), "utf8");
+}
+
+test("desktop HTML uses only bundled runtime scripts", () => {
+  for (const file of ["index.html", "popover.html", "island.html"]) {
+    const html = read(file);
+    assert.doesNotMatch(html, /https:\/\/unpkg\.com\/lucide/);
+    assert.match(html, /assets\/vendor\/lucide-lite\.js/);
+  }
+  assert.ok(fs.existsSync(path.join(root, "assets/vendor/lucide-lite.js")));
+});
+
+test("popover exposes only wired action buttons", () => {
+  const html = read("popover.html");
+  assert.doesNotMatch(html, />Pause</);
+  assert.match(html, /id="shareButton"/);
+  assert.match(html, /id="refreshButton"/);
+  assert.match(html, /id="openLogsButton"/);
+
+  const vendorScript = read("assets/vendor/lucide-lite.js");
+  assert.match(vendorScript, /"share-2"/);
+});
+
+test("browser prototype sends local API token for upload", () => {
+  const html = read("index.html");
+  assert.match(html, /client-config/);
+  assert.match(html, /x-opentoken-island-token/);
+  assert.doesNotMatch(html, /fetch\(`\$\{API_BASE\}\/upload`, \{ method: "POST" \}\)/);
+});
+
+test("browser prototype renders API tool labels without innerHTML", () => {
+  const html = read("index.html");
+  assert.match(html, /toolList\.replaceChildren\(\.\.\.rows\)/);
+  assert.match(html, /name\.textContent =/);
+  assert.match(html, /value\.textContent =/);
+  assert.doesNotMatch(html, /toolList\.innerHTML\s*=/);
+});
+
+test("mac app bundle includes the full assets directory", () => {
+  const installScript = read("scripts/install.sh");
+  assert.match(installScript, /cp -R "\$\{ROOT_DIR\}\/assets"/);
+  assert.doesNotMatch(installScript, /Resources\/assets\/scys\/icon_topnav\.png/);
+});

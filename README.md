@@ -58,7 +58,10 @@ The package installs `OpenToken Island.app` into `/Applications`, writes the use
 Trigger the Dynamic Island popup once:
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:4174/api/debug/island"
+TOKEN="$(curl -sS "http://127.0.0.1:4174/api/client-config" | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).apiToken')"
+curl -sS -X POST \
+  -H "x-opentoken-island-token: ${TOKEN}" \
+  "http://127.0.0.1:4174/api/debug/island"
 ```
 
 Watch the listener log:

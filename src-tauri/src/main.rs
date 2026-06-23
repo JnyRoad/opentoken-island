@@ -24,8 +24,8 @@ use tauri::{
     WebviewWindowBuilder,
 };
 use windows_support::{
-    floating_window_origin_bounded_with_anchor_gap, is_port_open, local_url, opentoken_bin,
-    server_resource_path, DEFAULT_PORT,
+    floating_window_origin_bounded_with_anchor_gap, is_island_server_ready, is_port_open,
+    local_url, opentoken_bin, server_resource_path, DEFAULT_PORT,
 };
 
 const PANEL_LABEL: &str = "panel";
@@ -170,8 +170,14 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
-    if is_port_open(DEFAULT_PORT) {
+    if is_island_server_ready(DEFAULT_PORT) {
         return Ok(());
+    }
+    if is_port_open(DEFAULT_PORT) {
+        return Err(tauri::Error::Io(IoError::new(
+            ErrorKind::AddrInUse,
+            format!("port {DEFAULT_PORT} is already used by another local service"),
+        )));
     }
 
     let server = resolve_server_path(app);
@@ -213,7 +219,7 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
 fn wait_for_server(port: u16, timeout: Duration) -> tauri::Result<()> {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
-        if is_port_open(port) {
+        if is_island_server_ready(port) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
