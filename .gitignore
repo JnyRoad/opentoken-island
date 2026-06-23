@@ -3,5 +3,7 @@ node_modules/
 *.log
 build/
 dist/
+src-tauri/target/
+src-tauri/gen/schemas/
 .superpowers/
 work/

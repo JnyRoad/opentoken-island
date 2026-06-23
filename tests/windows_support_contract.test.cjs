@@ -14,9 +14,12 @@ assert.equal(pkg.devDependencies["@tauri-apps/cli"], "^2.11.3");
 const config = readJson("src-tauri/tauri.conf.json");
 assert.equal(config.identifier, "com.opentoken.island.windows");
 assert.equal(config.productName, "OpenToken Island");
+assert.equal(config.build.frontendDist, "../desktop-placeholder");
 assert.equal(config.app.withGlobalTauri, false);
 assert.deepEqual(config.bundle.targets, ["nsis"]);
 assert.ok(config.bundle.icon.includes("icons/icon.png"));
+assert.ok(config.bundle.icon.includes("icons/icon.ico"));
+assert.ok(fs.existsSync(path.join(root, "src-tauri/icons/icon.ico")));
 
 const cargoToml = fs.readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
 assert.match(cargoToml, /tauri = \{ version = "2"/);

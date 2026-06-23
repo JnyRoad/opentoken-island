@@ -1,4 +1,6 @@
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const DEFAULT_PORT: u16 = 4174;
 
@@ -13,6 +15,11 @@ pub fn server_resource_path(resource_dir: &Path) -> PathBuf {
 pub fn local_url(path: &str) -> String {
     let clean = path.trim_start_matches('/');
     format!("http://127.0.0.1:{DEFAULT_PORT}/{clean}")
+}
+
+pub fn is_port_open(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
 }
 
 #[cfg(test)]
@@ -35,5 +42,10 @@ mod tests {
     fn builds_local_urls() {
         assert_eq!(local_url("popover.html"), "http://127.0.0.1:4174/popover.html");
         assert_eq!(local_url("/island.html"), "http://127.0.0.1:4174/island.html");
+    }
+
+    #[test]
+    fn detects_closed_local_port() {
+        assert!(!is_port_open(9));
     }
 }

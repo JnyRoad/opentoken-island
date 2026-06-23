@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.opentoken.island.windows",
   "build": {
-    "frontendDist": "../."
+    "frontendDist": "../desktop-placeholder"
   },
   "app": {
     "withGlobalTauri": false,
@@ -13,7 +13,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "resources": ["../server.js", "../assets"]
   }
 }
