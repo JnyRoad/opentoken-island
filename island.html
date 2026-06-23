@@ -40,7 +40,7 @@
     <span class="spark s5"></span>
     <span class="mark"><img src="./assets/scys/icon_topnav.png" alt=""></span>
     <div class="content">
-      <div class="icon"><i data-lucide="award"></i></div>
+      <div class="icon" id="icon"><i data-lucide="award"></i></div>
       <div>
         <h1 id="title">OpenToken 已同步</h1>
         <p id="copy" class="copy">真实数据已刷新，排名和今日 token 已更新。</p>
@@ -51,21 +51,24 @@
   </section>
   <script>
     if (window.lucide) lucide.createIcons();
+    const iconEl = document.getElementById('icon');
     const titleEl = document.getElementById('title');
     const copyEl = document.getElementById('copy');
     const metricEl = document.getElementById('metric');
     const metaEl = document.getElementById('meta');
     const trackFillEl = document.getElementById('trackFill');
+    // 灵动岛是纯展示层：文案、图标、右侧指标全部来自服务端算好的 data.report，
+    // 这里不再自行推导「守榜/追赶」——那套逻辑已收归 server 端的 buildBattleReport。
     fetch('/api/summary').then((response) => response.json()).then((data) => {
       if (!data.ok) return;
       const game = data.game || {};
-      titleEl.textContent = `今日 ${data.totalLabel || '--'} token`;
-      if (data.rank === 1) {
-        copyEl.textContent = `守住第 1，领先 ${data.nextName || '第 2 名'} ${data.leadOverNextLabel || '0'}。`;
-      } else {
-        copyEl.textContent = `当前 ${data.rankLabel || '#--'}，距 ${data.previousName || '上一名'} ${data.gapToPreviousLabel || '0'}。`;
-      }
-      metricEl.textContent = data.rankLabel || '#--';
+      const report = data.report || {};
+      // 战报左侧图标随类型变化（lucide）；report 缺失时回退到默认 award 图标。
+      iconEl.innerHTML = `<i data-lucide="${report.icon || 'award'}"></i>`;
+      if (window.lucide) lucide.createIcons();
+      titleEl.textContent = report.title || `今日 ${data.totalLabel || '--'} token`;
+      copyEl.textContent = report.copy || '';
+      metricEl.textContent = report.metric || data.rankLabel || '#--';
       metaEl.textContent = game.mainTool ? game.mainTool.label : 'live';
       trackFillEl.style.width = Math.max(4, game.xpPct || 0) + '%';
     }).catch(() => {});
