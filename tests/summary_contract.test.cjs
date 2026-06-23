@@ -69,5 +69,6 @@ test("buildSummary preserves UI data contract for leaderboard-backed state", () 
   ]);
   assert.equal(summary.game.mainTool.label, "Codex");
   assert.equal(summary.game.quests[0].done, false);
-  assert.equal(summary.game.badges.some((badge) => badge.title === "Rank Climber" && badge.unlocked), true);
+  assert.equal(summary.game.badges.some((badge) => badge.title === "总榜排名" && badge.detail === "第 2 名"), true);
+  assert.equal(summary.game.badges.some((badge) => badge.title === "上传状态" && badge.unlocked), true);
 });

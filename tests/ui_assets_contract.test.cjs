@@ -75,7 +75,17 @@ test("popover labels estimated ranks instead of treating them as confirmed", () 
   const html = read("popover.html");
   assert.match(html, /data\.rankEstimated/);
   assert.match(html, /预计排名/);
-  assert.match(html, /等待榜单确认/);
+  assert.match(html, /等待官网确认/);
+});
+
+test("popover uses clear Chinese status labels instead of gamified badge jargon", () => {
+  const html = read("popover.html");
+  assert.match(html, /今日进度/);
+  assert.match(html, /总榜排名/);
+  assert.match(html, /今日目标/);
+  assert.match(html, /主力工具/);
+  assert.match(html, /上传状态/);
+  assert.doesNotMatch(html, /Builder Lv|High Output|King Mode|Codex Main|Rank Climber|Hot Streak|Late Builder|>done</);
 });
 
 test("native status event refreshes the open popover webview", () => {

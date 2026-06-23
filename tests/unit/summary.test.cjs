@@ -62,10 +62,10 @@ test("findOwnEntry prefers userId among entries that match the current score and
   assert.equal(byShape.userId, "u1");
 });
 
-test("findOwnEntry matches leaderboard normalized score and tool breakdown", () => {
+test("findOwnEntry matches leaderboard raw score and tool breakdown", () => {
   const entries = [
     { userId: "u1", score: 100, byTool: { codex: 90, "claude-code": 10 } },
-    { userId: "u2", score: 40_284_724, byTool: { codex: 32_482_095, "claude-code": 7_802_629 } },
+    { userId: "u2", score: 938_786_946, byTool: { codex: 601_085_857, "claude-code": 337_701_089 } },
   ];
   const own = findOwnEntry(entries, {
     total: 938_786_946,
@@ -74,6 +74,24 @@ test("findOwnEntry matches leaderboard normalized score and tool breakdown", () 
     normalizedByTool: { codex: 32_482_095, "claude-code": 7_802_629 },
   }, "");
   assert.equal(own.userId, "u2");
+});
+
+test("findOwnEntry matches the public leaderboard raw token score, not normalized score", () => {
+  const entries = [
+    {
+      userId: "6466517",
+      rank: 1,
+      score: 373_124_040,
+      byTool: { codex: 334_160_936, "claude-code": 38_963_104 },
+    },
+  ];
+  const own = findOwnEntry(entries, {
+    total: 373_124_040,
+    normalized: 13_168_274,
+    byTool: { codex: 334_160_936, "claude-code": 38_963_104 },
+    normalizedByTool: { codex: 11_725_147, "claude-code": 1_443_127 },
+  }, "");
+  assert.equal(own.userId, "6466517");
 });
 
 test("computeLeaderboard derives rank neighbors, gap and lead", () => {
@@ -91,12 +109,12 @@ test("computeLeaderboard derives rank neighbors, gap and lead", () => {
   assert.equal(board.rankDelta, 4 - 2);
 });
 
-test("computeLeaderboard estimates rank from normalized score when own is not found", () => {
+test("computeLeaderboard estimates rank from raw token score when own is not found", () => {
   const entries = [
     { userId: "a", rank: 1, score: 300, name: "A" },
     { userId: "b", rank: 2, score: 100, name: "B" },
   ];
-  const board = computeLeaderboard(entries, { total: 9999, normalized: 200, normalizedByTool: { codex: 200 } }, null, "nobody");
+  const board = computeLeaderboard(entries, { total: 200, normalized: 9999, byTool: { codex: 200 } }, null, "nobody");
   assert.equal(board.estimated, true);
   assert.equal(board.own.estimated, true);
   assert.equal(board.own.rank, 2);
@@ -106,15 +124,38 @@ test("computeLeaderboard estimates rank from normalized score when own is not fo
   assert.equal(board.leadOverNext, 100);
 });
 
+test("computeLeaderboard confirms rank 1 when public leaderboard score equals raw total", () => {
+  const entries = [
+    {
+      userId: "6466517",
+      rank: 1,
+      score: 373_124_040,
+      name: "旅途",
+      byTool: { codex: 334_160_936, "claude-code": 38_963_104 },
+    },
+    { userId: "7183445", rank: 2, score: 154_809_210, name: "早早" },
+  ];
+  const board = computeLeaderboard(entries, {
+    total: 373_124_040,
+    normalized: 13_168_274,
+    byTool: { codex: 334_160_936, "claude-code": 38_963_104 },
+    normalizedByTool: { codex: 11_725_147, "claude-code": 1_443_127 },
+  }, null, "");
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 1);
+  assert.equal(board.own.score, 373_124_040);
+  assert.equal(board.next.userId, "7183445");
+});
+
 test("computeLeaderboard does not confirm a stale cached user id when score changed", () => {
   const entries = [
     { userId: "me", rank: 4, score: 100, name: "Me", byTool: { codex: 100 } },
     { userId: "a", rank: 1, score: 300, name: "A", byTool: { codex: 300 } },
   ];
   const board = computeLeaderboard(entries, {
-    total: 9999,
-    normalized: 200,
-    normalizedByTool: { codex: 200 },
+    total: 200,
+    normalized: 9999,
+    byTool: { codex: 200 },
   }, null, "me");
   assert.equal(board.estimated, true);
   assert.equal(board.own.estimated, true);
@@ -124,9 +165,9 @@ test("computeLeaderboard does not confirm a stale cached user id when score chan
 
 test("computeLeaderboard does not estimate a rank from an empty leaderboard", () => {
   const board = computeLeaderboard([], {
-    total: 9999,
-    normalized: 200,
-    normalizedByTool: { codex: 200 },
+    total: 200,
+    normalized: 9999,
+    byTool: { codex: 200 },
   }, null, "nobody");
   assert.equal(board, null);
 });
@@ -202,14 +243,14 @@ test("buildSummary marks locally estimated leaderboard ranks", () => {
       estimated: true,
       own: {
         rank: 1,
-        score: 40_284_724,
-        byTool: { codex: 32_482_095, "claude-code": 7_802_629 },
+        score: 938_786_946,
+        byTool: { codex: 601_085_857, "claude-code": 337_701_089 },
         estimated: true,
       },
       previous: null,
-      next: { rank: 2, name: "Alice", score: 3_000_000 },
+      next: { rank: 2, name: "Alice", score: 300_000_000 },
       gapToPrevious: 0,
-      leadOverNext: 37_284_724,
+      leadOverNext: 638_786_946,
       rankDelta: 0,
     },
   });
@@ -217,7 +258,7 @@ test("buildSummary marks locally estimated leaderboard ranks", () => {
   assert.equal(s.rankEstimated, true);
   assert.equal(s.rankLabel, "#1");
   assert.equal(s.total, 938_786_946);
-  assert.equal(s.leaderboardScore, 40_284_724);
+  assert.equal(s.leaderboardScore, 938_786_946);
   assert.match(s.game.quests[0].title, /预计/);
 });
 
