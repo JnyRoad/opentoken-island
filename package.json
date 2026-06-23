@@ -5,6 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "test": "node tests/windows_support_contract.test.cjs",
+    "test:unit": "node --test tests/unit/*.test.cjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
+const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
@@ -12,6 +13,10 @@ const CONFIG_PATH = path.join(HOME, ".opentoken", "config.json");
 const STATE_PATH = path.join(HOME, ".opentoken", "island-state.json");
 const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
+
+const LEADERBOARD_LIMIT = 500;
+const LEADERBOARD_MAX_ATTEMPTS = 4;
+const LEADERBOARD_RETRY_DELAY_MS = 900;
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -24,12 +29,31 @@ const mime = {
 let state = loadState();
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
-function loadState() {
+function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false } = {}) {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
-  } catch {
-    return {};
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error; // EACCES and other IO problems are real — surface them
   }
+  if (raw.trim() === "") return {}; // empty file (e.g. interrupted write) is not corruption
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    if (tolerateCorruption) {
+      // The state file is a server-owned, rebuildable cache. A truncated write must
+      // not brick startup — warn loudly (never silent) and fall back to empty.
+      console.warn(`[server] ignoring corrupt JSON at ${filePath}, using empty state: ${error.message}`);
+      return {};
+    }
+    throw new Error(`Failed to parse JSON at ${filePath}: ${error.message}`);
+  }
+}
+
+// State is a rebuildable cache → tolerate corruption (warn + reset).
+function loadState() {
+  return parseJsonFileOrEmpty(STATE_PATH, { tolerateCorruption: true });
 }
 
 function findOpenTokenBinary() {
@@ -84,11 +108,7 @@ function redactUploadPath(pathname = "") {
 }
 
 function readConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return {};
-  }
+  return parseJsonFileOrEmpty(CONFIG_PATH);
 }
 
 function writeConfig(config) {
@@ -227,254 +247,28 @@ function safeJson(text) {
   }
 }
 
-function formatCount(value) {
-  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`;
-  if (value >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
-  return String(Math.round(value));
-}
-
-function formatPercent(value) {
-  return `${Math.round((Number.isFinite(value) ? value : 0) * 100)}%`;
-}
-
-function rowsFromPayload(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.rows)) return payload.rows;
-  if (Array.isArray(payload?.records)) return payload.records;
-  return [];
-}
-
-function rawTokens(row) {
-  return Number(row.input || 0)
-    + Number(row.output || 0)
-    + Number(row.cache_read || 0)
-    + Number(row.cache_write || 0);
-}
-
-function summarizeRows(rows, preferredDate = "") {
-  const dates = [...new Set(rows.map((row) => row.date).filter(Boolean))].sort();
-  const date = preferredDate && dates.includes(preferredDate)
-    ? preferredDate
-    : dates[dates.length - 1] || "";
-  const dayRows = rows.filter((row) => row.date === date);
-  const byTool = {};
-  let normalized = 0;
-  for (const row of dayRows) {
-    byTool[row.tool] = (byTool[row.tool] || 0) + rawTokens(row);
-    normalized += Number(row.normalized || 0);
-  }
-  const total = Object.values(byTool).reduce((sum, value) => sum + value, 0);
-  return { date, total, normalized, byTool, rowCount: dayRows.length };
-}
-
-function toolsFromMap(byTool = {}) {
-  const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1]);
-  const max = Math.max(1, ...entries.map(([, value]) => value));
-  return entries.slice(0, 6).map(([name, value]) => ({
-    name,
-    value,
-    label: toolLabel(name),
-    valueLabel: formatCount(value),
-    pct: Math.max(4, Math.round((value / max) * 100)),
-  }));
-}
-
-function toolLabel(name) {
-  const labels = {
-    "claude-code": "Claude Code",
-    codex: "Codex",
-    gemini: "Gemini",
-    openclaw: "OpenClaw",
-    opencode: "opencode",
-  };
-  return labels[name] || name.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function toolIcon(name) {
-  const icons = {
-    "claude-code": "bot",
-    codex: "zap",
-    gemini: "sparkles",
-    openclaw: "terminal",
-    opencode: "code-2",
-  };
-  return icons[name] || "terminal";
-}
-
-function rankedTools(byTool = {}, total = 0) {
-  return Object.entries(byTool)
-    .map(([name, value]) => ({
-      name,
-      value: Number(value || 0),
-      label: toolLabel(name),
-      icon: toolIcon(name),
-      share: total > 0 ? Number(value || 0) / total : 0,
-    }))
-    .sort((a, b) => b.value - a.value);
-}
-
-function buildGame({ total, rank, rankDelta, byTool, previous, next, gap, lead }) {
-  const levelSize = 25_000_000;
-  const highOutputTarget = 300_000_000;
-  const toolRanks = rankedTools(byTool, total);
-  const mainTool = toolRanks[0] || { name: "", label: "Main Tool", icon: "terminal", value: 0, share: 0 };
-  const runnerUpTool = toolRanks[1] || null;
-  const mainLead = runnerUpTool ? Math.max(0, mainTool.value - runnerUpTool.value) : mainTool.value;
-  const accepted = Number(state.lastUpload?.upstream?.json?.accepted || 0);
-  const level = Math.max(1, Math.floor(total / levelSize) + 1);
-  const xp = total > 0 ? total % levelSize : 0;
-  const xpPct = Math.max(4, Math.round((xp / levelSize) * 100));
-  const scoreDone = total >= highOutputTarget;
-  const king = rank === 1;
-  const rankQuest = king
-    ? {
-        icon: "crown",
-        title: "王座守护：今日总榜第 1",
-        detail: next ? `领先 ${next.name} ${formatCount(lead)}` : "当前无人追近",
-        rewardLabel: "+800",
-        done: true,
-      }
-    : {
-        icon: "trending-up",
-        title: "排名冲刺：超过上一名",
-        detail: previous ? `距 ${previous.name} 还差 ${formatCount(gap)}` : "等待榜单排名",
-        rewardLabel: "+800",
-        done: false,
-      };
-
-  return {
-    level,
-    levelTitle: `Builder Lv. ${level}`,
-    xp,
-    xpMax: levelSize,
-    xpPct,
-    xpLabel: `${formatCount(xp)} / ${formatCount(levelSize)} XP`,
-    codexShare: total > 0 ? Number(byTool.codex || 0) / total : 0,
-    codexShareLabel: formatPercent(total > 0 ? Number(byTool.codex || 0) / total : 0),
-    mainTool: {
-      name: mainTool.name,
-      label: mainTool.label,
-      value: mainTool.value,
-      valueLabel: formatCount(mainTool.value),
-      share: mainTool.share,
-      shareLabel: formatPercent(mainTool.share),
-      leadLabel: formatCount(mainLead),
-    },
-    quests: [
-      rankQuest,
-      {
-        icon: "target",
-        title: "每日任务：冲到 3 亿",
-        detail: `${formatCount(total)} / ${formatCount(highOutputTarget)}`,
-        rewardLabel: "+620",
-        done: scoreDone,
-      },
-      {
-        icon: mainTool.icon,
-        title: `主力工具：${mainTool.label} Main`,
-        detail: runnerUpTool
-          ? `领先 ${runnerUpTool.label} ${formatCount(mainLead)}`
-          : `${formatPercent(mainTool.share)} share`,
-        rewardLabel: "+240",
-        done: mainTool.value > 0,
-      },
-    ],
-    badges: [
-      {
-        icon: "crown",
-        title: "King Mode",
-        detail: king ? "今日总榜 #1" : rank ? `当前 #${rank}` : "等待排名",
-        unlocked: king,
-        featured: king,
-      },
-      {
-        icon: "flame",
-        title: "High Output",
-        detail: `${formatCount(total)} / ${formatCount(highOutputTarget)}`,
-        unlocked: scoreDone,
-        featured: scoreDone && !king,
-      },
-      {
-        icon: mainTool.icon,
-        title: `${mainTool.label} Main`,
-        detail: `${formatPercent(mainTool.share)} share`,
-        unlocked: mainTool.value > 0,
-        featured: false,
-      },
-      {
-        icon: "trending-up",
-        title: "Rank Climber",
-        detail: rankDelta > 0 ? `上升 ${rankDelta} 名` : king ? "守住第 1" : "等待突破",
-        unlocked: rankDelta > 0 || king,
-        featured: false,
-      },
-    ],
-    sync: {
-      accepted,
-      done: accepted > 0,
-    },
-  };
-}
-
-function sameToolBreakdown(entryTools = {}, summaryTools = {}) {
-  const keys = Object.keys(summaryTools);
-  if (!keys.length) return false;
-  return keys.every((key) => Number(entryTools[key] || 0) === Number(summaryTools[key] || 0));
-}
-
-function findOwnEntry(entries, summary) {
-  if (state.userId) {
-    const byUser = entries.find((entry) => String(entry.userId) === String(state.userId));
-    if (byUser) return byUser;
-  }
-  return entries.find((entry) =>
-    Number(entry.score || 0) === Number(summary.total || 0)
-    && sameToolBreakdown(entry.byTool || {}, summary.byTool || {})
-  );
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function refreshLeaderboard(summary, previousRank = null) {
-  const endpoint = "https://scys.com/tokenrank/api/subapp/leaderboard?board=total&range=today&limit=500";
+  const endpoint = `https://scys.com/tokenrank/api/subapp/leaderboard?board=total&range=today&limit=${LEADERBOARD_LIMIT}`;
   let lastResult = null;
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < LEADERBOARD_MAX_ATTEMPTS; attempt += 1) {
     const result = await requestText("GET", endpoint, "", { accept: "application/json" });
     lastResult = result;
     const entries = Array.isArray(result.json?.entries) ? result.json.entries : [];
-    const own = findOwnEntry(entries, summary);
+    const board = computeLeaderboard(entries, summary, previousRank, state.userId);
 
-    if (own) {
-      const index = entries.findIndex((entry) => entry.rank === own.rank || entry.userId === own.userId);
-      const previous = own.rank > 1
-        ? entries.find((entry) => entry.rank === own.rank - 1) || entries[index - 1] || null
-        : null;
-      const next = entries.find((entry) => entry.rank === own.rank + 1) || entries[index + 1] || null;
-      const gapToPrevious = previous ? Math.max(0, Number(previous.score || 0) - Number(own.score || 0) + 1) : 0;
-      const leadOverNext = next ? Math.max(0, Number(own.score || 0) - Number(next.score || 0)) : 0;
-      const rankDelta = typeof previousRank === "number" ? previousRank - Number(own.rank || previousRank) : 0;
-
-      state.userId = own.userId;
-      state.leaderboard = {
-        updatedAt: new Date().toISOString(),
-        board: "total",
-        range: "today",
-        entriesCount: entries.length,
-        own,
-        previous,
-        next,
-        gapToPrevious,
-        leadOverNext,
-        rankDelta,
-      };
+    if (board) {
+      state.userId = board.own.userId;
+      state.leaderboard = { updatedAt: new Date().toISOString(), ...board };
       saveState();
       return state.leaderboard;
     }
 
-    if (attempt < 3) await sleep(900);
+    if (attempt < LEADERBOARD_MAX_ATTEMPTS - 1) await sleep(LEADERBOARD_RETRY_DELAY_MS);
   }
 
   state.leaderboard = {
@@ -488,71 +282,11 @@ async function refreshLeaderboard(summary, previousRank = null) {
   return state.leaderboard;
 }
 
-function buildSummary() {
-  const uploadSummary = state.lastUpload?.summary || null;
-  const board = state.leaderboard || null;
-  const own = board?.own || null;
-  const previous = board?.previous || null;
-  const next = board?.next || null;
-  const byTool = own?.byTool || uploadSummary?.byTool || {};
-  const total = Number(own?.score || uploadSummary?.total || 0);
-  const rank = own ? Number(own.rank) : null;
-  const gap = Number(board?.gapToPrevious || 0);
-  const lead = Number(board?.leadOverNext || 0);
-  const tools = toolsFromMap(byTool);
-  const game = buildGame({
-    total,
-    rank,
-    rankDelta: Number(board?.rankDelta || 0),
-    byTool,
-    previous,
-    next,
-    gap,
-    lead,
-  });
-
-  return {
-    ok: true,
-    waiting: !uploadSummary,
-    source: own ? "leaderboard" : uploadSummary ? "upload" : "waiting",
-    capturedAt: state.lastUpload?.capturedAt || "",
-    leaderboardUpdatedAt: board?.updatedAt || "",
-    date: uploadSummary?.date || "",
-    total,
-    totalLabel: uploadSummary ? formatCount(total) : "--",
-    rank,
-    rankLabel: rank ? `#${rank}` : "#--",
-    rankDelta: Number(board?.rankDelta || 0),
-    previousName: previous?.name || "",
-    previousScore: Number(previous?.score || 0),
-    nextName: next?.name || "",
-    nextScore: Number(next?.score || 0),
-    gapToPrevious: gap,
-    gapToPreviousLabel: rank === 1 ? "0" : formatCount(gap),
-    leadOverNext: lead,
-    leadOverNextLabel: formatCount(lead),
-    nextRankGap: gap,
-    xp: game.xp,
-    xpMax: game.xpMax,
-    game,
-    quests: game.quests,
-    badges: game.badges,
-    tools,
-    upstream: {
-      accepted: state.lastUpload?.upstream?.json?.accepted ?? null,
-      status: state.lastUpload?.upstream?.status ?? null,
-    },
-  };
-}
-
 function accountStatus() {
   const proxy = ensureProxyConfig();
   const webhook = proxy.upstreamUrl || "";
-  let accountId = "";
-  try {
-    const match = webhook.match(/\/u\/([^/?#]+)/);
-    accountId = match ? match[1] : "";
-  } catch {}
+  const match = webhook.match(/\/u\/([^/?#]+)/);
+  const accountId = match ? match[1] : "";
   return {
     connected: Boolean(webhook),
     proxied: proxy.proxied,
@@ -634,7 +368,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, {
       ok: true,
       event,
-      summary: buildSummary(),
+      summary: buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
     });
   }
 
@@ -643,7 +377,7 @@ async function handleApi(req, res, url) {
       await refreshLeaderboard(state.lastUpload.summary, state.leaderboard?.own?.rank || null);
     }
     return json(res, 200, {
-      ...buildSummary(),
+      ...buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
       account: accountStatus(),
       service: await serviceStatus(),
     });
@@ -656,7 +390,7 @@ async function handleApi(req, res, url) {
     return json(res, result.ok ? 200 : 500, {
       ok: result.ok,
       output: (result.stdout || result.stderr || result.message).trim(),
-      summary: buildSummary(),
+      summary: buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
       account: accountStatus(),
       service: await serviceStatus(),
     });
@@ -721,7 +455,11 @@ const server = http.createServer((req, res) => {
   return serveStatic(req, res, url);
 });
 
-ensureProxyConfig();
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`OpenToken Island proxy running at http://127.0.0.1:${PORT}`);
-});
+if (require.main === module) {
+  ensureProxyConfig();
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`OpenToken Island proxy running at http://127.0.0.1:${PORT}`);
+  });
+}
+
+module.exports = { server, parseJsonFileOrEmpty };
