@@ -59,6 +59,11 @@ assert.match(
 );
 assert.match(
   mainRs,
+  /WindowEvent::Focused\(false\)[\s\S]*hide_pinned_panel_on_blur/,
+  "Pinned tray panel must hide when the user clicks outside and the window loses focus"
+);
+assert.match(
+  mainRs,
   /external_url\("popover\.html"\)[\s\S]*WebviewWindowBuilder::new\(app, PANEL_LABEL/,
   "The tray panel must render the same popover UI used by the browser panel"
 );

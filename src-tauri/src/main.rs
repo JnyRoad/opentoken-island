@@ -65,8 +65,8 @@ fn main() {
             setup_tray(app.handle())?;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 if window.label() == PANEL_LABEL {
                     set_panel_pinned(&window.app_handle(), false);
                     api.prevent_close();
@@ -76,6 +76,10 @@ fn main() {
                     let _ = window.hide();
                 }
             }
+            tauri::WindowEvent::Focused(false) if window.label() == PANEL_LABEL => {
+                let _ = hide_pinned_panel_on_blur(&window.app_handle());
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("failed to build OpenToken Island")
@@ -424,6 +428,15 @@ fn schedule_hide_panel_at_epoch(app: &AppHandle, delay: Duration, epoch: u64) {
 fn hide_panel(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(PANEL_LABEL) {
         window.hide()?;
+    }
+    Ok(())
+}
+
+fn hide_pinned_panel_on_blur(app: &AppHandle) -> tauri::Result<()> {
+    if is_panel_pinned(app) {
+        set_panel_pinned(app, false);
+        bump_panel_epoch(app);
+        hide_panel(app)?;
     }
     Ok(())
 }
