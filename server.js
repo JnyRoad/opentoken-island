@@ -29,12 +29,23 @@ const mime = {
 let state = loadState();
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
-function loadState() {
+function parseJsonFileOrEmpty(filePath) {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
-  } catch {
-    return {};
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error; // EACCES and other IO problems are real — surface them
   }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to parse JSON at ${filePath}: ${error.message}`);
+  }
+}
+
+function loadState() {
+  return parseJsonFileOrEmpty(STATE_PATH);
 }
 
 function findOpenTokenBinary() {
@@ -89,11 +100,7 @@ function redactUploadPath(pathname = "") {
 }
 
 function readConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return {};
-  }
+  return parseJsonFileOrEmpty(CONFIG_PATH);
 }
 
 function writeConfig(config) {
@@ -270,11 +277,8 @@ async function refreshLeaderboard(summary, previousRank = null) {
 function accountStatus() {
   const proxy = ensureProxyConfig();
   const webhook = proxy.upstreamUrl || "";
-  let accountId = "";
-  try {
-    const match = webhook.match(/\/u\/([^/?#]+)/);
-    accountId = match ? match[1] : "";
-  } catch {}
+  const match = webhook.match(/\/u\/([^/?#]+)/);
+  const accountId = match ? match[1] : "";
   return {
     connected: Boolean(webhook),
     proxied: proxy.proxied,
@@ -450,4 +454,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server };
+module.exports = { server, parseJsonFileOrEmpty };
