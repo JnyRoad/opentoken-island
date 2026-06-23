@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var eventTimer: Timer?
     private let contextMenu = NSMenu()
     private let port = 4174
-    private var lastRank: Int?
     private var lastIslandEventId: Int64 = 0
     private var unlockedBadgeTitles = Set<String>()
     private var didLoadInitialSnapshot = false
@@ -251,8 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 } else {
                     self.statusItem.button?.title = " \(total)"
                 }
-                if self.shouldShowIsland(waiting: waiting, rank: rank, unlockedBadges: unlockedBadges) {
-                    self.showIsland(reason: "rank-or-badge-change")
+                if self.shouldShowIsland(waiting: waiting, unlockedBadges: unlockedBadges) {
+                    self.showIsland(reason: "badge-unlocked")
                 }
             }
         }.resume()
@@ -297,18 +296,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         })
     }
 
-    private func shouldShowIsland(waiting: Bool, rank: Int?, unlockedBadges: Set<String>) -> Bool {
+    private func shouldShowIsland(waiting: Bool, unlockedBadges: Set<String>) -> Bool {
         guard !waiting else { return false }
         defer {
             didLoadInitialSnapshot = true
-            lastRank = rank
             unlockedBadgeTitles = unlockedBadges
         }
 
         guard didLoadInitialSnapshot else { return false }
-        let rankChanged = rank != nil && lastRank != nil && rank != lastRank
-        let hasNewBadge = !unlockedBadges.subtracting(unlockedBadgeTitles).isEmpty
-        return rankChanged || hasNewBadge
+        // 名次变化的弹窗已改为纯服务端事件驱动（server 端 queueIslandEvent），
+        // 客户端这里只保留「新解锁徽章」这一类自判触发，避免与服务端战报重复弹窗。
+        return !unlockedBadges.subtracting(unlockedBadgeTitles).isEmpty
     }
 
     private func logIsland(_ message: String) {

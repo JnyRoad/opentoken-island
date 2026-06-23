@@ -4,6 +4,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
+const { formatCount, formatPercent } = require("./format");
+const { buildBattleReport } = require("./battle-report");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
@@ -225,16 +227,6 @@ function safeJson(text) {
   } catch {
     return null;
   }
-}
-
-function formatCount(value) {
-  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`;
-  if (value >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
-  return String(Math.round(value));
-}
-
-function formatPercent(value) {
-  return `${Math.round((Number.isFinite(value) ? value : 0) * 100)}%`;
 }
 
 function rowsFromPayload(payload) {
@@ -535,6 +527,8 @@ function buildSummary() {
     xp: game.xp,
     xpMax: game.xpMax,
     game,
+    // 战报：始终用当前榜单实时计算，保证灵动岛展示与当前排名一致（不缓存，避免陈旧）。
+    report: buildBattleReport(board),
     quests: game.quests,
     badges: game.badges,
     tools,
@@ -614,6 +608,17 @@ async function handleUploadProxy(req, res, url) {
       gapToPrevious: leaderboard?.gapToPrevious ?? null,
       leadOverNext: leaderboard?.leadOverNext ?? null,
     });
+
+    // 战报不缓存：弹窗触发只看「这次上传是否产生了值得报的变化」。
+    // 灵动岛展示时由 buildSummary 用当前榜单实时计算，避免显示陈旧战报（与实时排名脱节）。
+    const report = buildBattleReport(leaderboard);
+    logIslandEvent("built battle report", { type: report.type, title: report.title });
+
+    // 纯服务端事件驱动：只有「值得报」的战报（非 default）才排队弹窗，
+    // 守榜/无变化（default）不打扰用户。弹不弹由这里单点决定，Swift 只管「有新事件就显示」。
+    if (report.type !== "default") {
+      queueIslandEvent(report.type);
+    }
   }
 
   res.writeHead(upstream.status || 502, {
