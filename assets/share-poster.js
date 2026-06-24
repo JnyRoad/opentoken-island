@@ -6,46 +6,70 @@
   root.OpenTokenSharePoster = api;
 })(typeof globalThis !== "undefined" ? globalThis : window, function createSharePosterApi() {
   const WIDTH = 1080;
-  const HEIGHT = 1440;
-  const LOGO_URL = "./assets/scys/icon_topnav.png";
+  const HEIGHT = 1920;
+  const TEMPLATE_URL = "./assets/share-poster-template.html";
   const PNG_TYPE = "image/png";
   const SVG_TYPE = "image/svg+xml;charset=utf-8";
 
   const TOKEN_IDENTITIES = [
     {
       min: 0,
-      title: "刚上手",
-      shortTitle: "刚上手",
-      description: "刚开始把问题交给 AI。",
+      title: "炼气期",
+      shortTitle: "炼气期",
+      description: "刚开始把 AI 纳入日常修炼。",
     },
     {
-      min: 100_000,
-      title: "会拆题",
-      shortTitle: "会拆题",
-      description: "能把大问题拆成可执行步骤。",
+      min: 10_000_000,
+      title: "筑基期",
+      shortTitle: "筑基期",
+      description: "开始稳定用 AI 打底，把问题拆成可执行路径。",
     },
     {
-      min: 1_000_000,
-      title: "能出活",
-      shortTitle: "能出活",
-      description: "能用 AI 产出方案、代码和文档。",
+      min: 100_000_000,
+      title: "金丹期",
+      shortTitle: "金丹期",
+      description: "已经能把大量 token 炼成方案、代码和文档。",
     },
     {
-      min: 5_000_000,
-      title: "模型炼金师",
-      shortTitle: "炼金师",
-      description: "把模糊问题反复烧到能炼成结果。",
+      min: 500_000_000,
+      title: "元婴期",
+      shortTitle: "元婴期",
+      description: "高强度调用 AI，形成持续交付节奏。",
     },
     {
-      min: 20_000_000,
-      title: "算力合伙人",
-      shortTitle: "算力合伙人",
-      description: "把 token 投向更快验证和真实交付。",
+      min: 1_500_000_000,
+      title: "化神期",
+      shortTitle: "化神期",
+      description: "把复杂问题拆解、验证、迭代到可落地。",
+    },
+    {
+      min: 4_000_000_000,
+      title: "大乘期",
+      shortTitle: "大乘期",
+      description: "进入顶级消耗区，距离渡劫仍有余量。",
+    },
+    {
+      min: 10_000_000_000,
+      title: "渡劫期",
+      shortTitle: "渡劫期",
+      description: "单日百亿 token 的终局境界。",
     },
   ];
-  const TIER_MARKER_X = [82, 292, 502, 710, 998];
 
-  function escapeXml(value) {
+  function readBundledTemplate() {
+    if (typeof require !== "function") return "";
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      return fs.readFileSync(path.join(__dirname, "share-poster-template.html"), "utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  const DEFAULT_TEMPLATE_HTML = readBundledTemplate();
+
+  function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",
       "<": "&lt;",
@@ -55,24 +79,32 @@
     }[char]));
   }
 
+  function numberOrZero(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function formatCount(value) {
+    return Math.round(numberOrZero(value)).toLocaleString("en-US");
+  }
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
 
-  function formatCount(value) {
-    const number = Number(value || 0);
-    return Number.isFinite(number) ? Math.round(number).toLocaleString("en-US") : "0";
+  function fieldValue(summary, options, name) {
+    const value = summary?.[name];
+    return value === undefined || value === null || value === "" ? options?.[name] : value;
   }
 
   function getTokenIdentity(totalTokens) {
-    const total = Math.max(0, Number(totalTokens || 0));
+    const total = Math.max(0, numberOrZero(totalTokens));
     let index = 0;
     for (let i = 0; i < TOKEN_IDENTITIES.length; i += 1) {
       if (total >= TOKEN_IDENTITIES[i].min) index = i;
     }
     const identity = TOKEN_IDENTITIES[index];
     const next = TOKEN_IDENTITIES[index + 1] || null;
-    const markerProgress = index / (TOKEN_IDENTITIES.length - 1);
     const rangeProgress = next
       ? clamp((total - identity.min) / (next.min - identity.min), 0, 1)
       : 1;
@@ -80,134 +112,135 @@
       ...identity,
       index,
       next,
-      markerProgress,
+      markerProgress: index / (TOKEN_IDENTITIES.length - 1),
       rangeProgress,
+      total,
     };
   }
 
-  function buildTierScale(activeIndex, markerX) {
-    const circles = TOKEN_IDENTITIES.map((tier, index) => {
-      const x = TIER_MARKER_X[index];
-      const active = index === activeIndex;
-      const opacity = !active && index === TOKEN_IDENTITIES.length - 1 ? ' fill-opacity="0.38"' : "";
-      return `<circle cx="${x}" cy="1132" r="${active ? 24 : 14}"${opacity}/>`;
-    }).join("");
+  function describeDelta(rankDelta) {
+    const delta = numberOrZero(rankDelta);
+    if (delta > 0) return { label: String(delta), icon: "up" };
+    if (delta < 0) return { label: String(-delta), icon: "down" };
+    return null;
+  }
 
-    const labels = TOKEN_IDENTITIES.map((tier, index) => {
-      const x = TIER_MARKER_X[index];
-      const active = index === activeIndex;
-      return `<text x="${x}" y="${active ? 1184 : 1182}" text-anchor="middle" font-size="${active ? 23 : 18}" font-weight="${active ? 950 : 850}" fill="${active ? "#F7EFD6" : "#D7EFE5"}"${active ? "" : ' fill-opacity="0.78"'}>${escapeXml(tier.shortTitle)}</text>`;
-    }).join("\n    ");
+  function buildRankDeltaBadge(rankDelta, rankEstimated) {
+    if (rankEstimated) return "";
+    const delta = describeDelta(rankDelta);
+    if (!delta) return "";
+    const path = delta.icon === "up"
+      ? "M17 5 L29 25 H5 Z"
+      : "M17 29 L5 9 H29 Z";
+    return `<span class="delta ${escapeHtml(delta.icon)}">
+            <svg width="34" height="34" viewBox="0 0 34 34"><path d="${path}" fill="currentColor"/></svg>
+            ${escapeHtml(delta.label)}
+          </span>`;
+  }
 
-    return `<g fill="#D7EFE5">${circles}</g>
-    <circle cx="${markerX}" cy="1132" r="36" fill="none" stroke="#F7EFD6" stroke-width="4"/>
-    ${labels}`;
+  function tokenUnitFor(label) {
+    const text = String(label || "");
+    return text && text !== "--" && text !== "榜首" && text !== "等待确认" ? "tokens" : "";
+  }
+
+  function scaleProgress(identity) {
+    const progress = (identity.index + identity.rangeProgress) / (TOKEN_IDENTITIES.length - 1);
+    return String(Math.round(clamp(progress, 0, 1) * 1000) / 10);
+  }
+
+  function templateValueMap(summary = {}, options = {}) {
+    const total = Math.max(0, numberOrZero(summary?.total));
+    const identity = getTokenIdentity(total);
+    const rankValue = fieldValue(summary, options, "rank");
+    const rank = rankValue ? Number(rankValue) : null;
+    const hasRank = Number.isFinite(rank) && rank > 0;
+    const rankEstimated = Boolean(fieldValue(summary, options, "rankEstimated"));
+    const rankLabel = hasRank
+      ? fieldValue(summary, options, "rankLabel") || `#${rank}`
+      : "#--";
+    const gapToPrevious = hasRank ? (rank === 1 ? "榜首" : fieldValue(summary, options, "gapToPreviousLabel") || "--") : "等待确认";
+    const leadOverNext = hasRank ? fieldValue(summary, options, "leadOverNextLabel") || "--" : "等待确认";
+    const replacements = {
+      REALM_TITLE: escapeHtml(identity.title),
+      REALM_DESCRIPTION: escapeHtml(identity.description),
+      RANK_LABEL: escapeHtml(rankLabel),
+      RANK_DELTA_BADGE: buildRankDeltaBadge(fieldValue(summary, options, "rankDelta"), rankEstimated),
+      GAP_TO_PREVIOUS: escapeHtml(gapToPrevious),
+      GAP_TO_PREVIOUS_UNIT: escapeHtml(tokenUnitFor(gapToPrevious)),
+      LEAD_OVER_NEXT: escapeHtml(leadOverNext),
+      LEAD_OVER_NEXT_UNIT: escapeHtml(tokenUnitFor(leadOverNext)),
+      TOTAL_LABEL: escapeHtml(summary?.totalLabel && summary.totalLabel !== "--" ? summary.totalLabel : formatCount(total)),
+      SCALE_PROGRESS: scaleProgress(identity),
+    };
+
+    TOKEN_IDENTITIES.forEach((tier, index) => {
+      replacements[`NODE_${index}_CLASS`] = index < identity.index
+        ? "done"
+        : index === identity.index
+          ? "cur"
+          : "future";
+      replacements[`TICK_${index}_CLASS`] = index === identity.index ? "cur" : "";
+      replacements[`TIER_${index}_TITLE`] = escapeHtml(tier.title);
+    });
+
+    return replacements;
+  }
+
+  function replaceTemplateValues(templateHtml, values) {
+    let html = templateHtml;
+    Object.entries(values).forEach(([name, value]) => {
+      html = html.split(`{{${name}}}`).join(String(value));
+    });
+    if (/{{[A-Z0-9_]+}}/.test(html)) {
+      throw new Error("Share poster template has unresolved placeholders");
+    }
+    return html;
+  }
+
+  function requireTemplateHtml(templateHtml) {
+    const html = templateHtml || DEFAULT_TEMPLATE_HTML;
+    if (!html) throw new Error("Share poster template is unavailable");
+    return html;
+  }
+
+  function buildSharePosterHtml(summary, options = {}) {
+    const templateHtml = requireTemplateHtml(options.templateHtml);
+    return replaceTemplateValues(templateHtml, templateValueMap(summary, options));
+  }
+
+  function extractBetween(source, startMarker, endMarker) {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker);
+    if (start < 0 || end < 0 || end <= start) {
+      throw new Error("Share poster template markers are missing");
+    }
+    return source.slice(start + startMarker.length, end).trim();
+  }
+
+  function extractTemplateStyle(html) {
+    const match = html.match(/<style>([\s\S]*?)<\/style>/i);
+    if (!match) throw new Error("Share poster template style is missing");
+    return match[1];
   }
 
   function buildSharePosterSvg(summary, options = {}) {
-    const total = Number(summary?.total || 0);
-    const totalLabel = summary?.totalLabel && summary.totalLabel !== "--"
-      ? summary.totalLabel
-      : formatCount(total);
-    const identity = getTokenIdentity(total);
-    const logoHref = options.logoHref || LOGO_URL;
-    const percentile = Number(options.percentile || 0);
-    const hasPercentile = Number.isFinite(percentile) && percentile > 0;
-    const percentLabel = hasPercentile ? `${clamp(Math.round(percentile), 1, 99)}%` : `${Math.round(identity.rangeProgress * 100)}%`;
-    const percentTop = hasPercentile ? "超过" : "进度";
-    const percentBottom = hasPercentile ? "用户" : "本档";
-    const progressWidth = Math.round(610 * clamp(identity.markerProgress + identity.rangeProgress * 0.16, 0.05, 1));
-    const markerX = TIER_MARKER_X[identity.index] || TIER_MARKER_X[0];
-    const tierScaleSvg = buildTierScale(identity.index, markerX);
-    const quote = `“我测了一下，原来我是${identity.title}。”`;
-
+    const html = buildSharePosterHtml(summary, options);
+    const style = extractTemplateStyle(html);
+    const fragment = extractBetween(html, "<!-- SHARE_POSTER_FRAGMENT_START -->", "<!-- SHARE_POSTER_FRAGMENT_END -->");
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#004740"/>
-      <stop offset="0.48" stop-color="#00826F"/>
-      <stop offset="1" stop-color="#005B50"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="76%" cy="18%" r="58%">
-      <stop offset="0" stop-color="#00A889" stop-opacity="0.42"/>
-      <stop offset="1" stop-color="#00A889" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="lowGlow" cx="20%" cy="86%" r="50%">
-      <stop offset="0" stop-color="#D7EFE5" stop-opacity="0.18"/>
-      <stop offset="1" stop-color="#D7EFE5" stop-opacity="0"/>
-    </radialGradient>
-    <pattern id="lineGrid" width="64" height="64" patternUnits="userSpaceOnUse">
-      <path d="M64 0H0V64" fill="none" stroke="#D7EFE5" stroke-opacity="0.055" stroke-width="1"/>
-    </pattern>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#00322D" flood-opacity="0.36"/>
-    </filter>
-    <clipPath id="logoClip"><rect x="72" y="72" width="190" height="124" rx="26"/></clipPath>
-  </defs>
-
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#bg)"/>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#glow)"/>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#lowGlow)"/>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#lineGrid)"/>
-  <circle cx="926" cy="168" r="274" fill="none" stroke="#D7EFE5" stroke-opacity="0.16" stroke-width="2"/>
-  <circle cx="926" cy="168" r="186" fill="none" stroke="#D7EFE5" stroke-opacity="0.11" stroke-width="2"/>
-  <circle cx="172" cy="1230" r="310" fill="none" stroke="#D7EFE5" stroke-opacity="0.10" stroke-width="2"/>
-  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif" opacity="0.085">
-    <text x="116" y="322" font-size="108" font-weight="950" fill="#D7EFE5">真诚</text>
-    <text x="664" y="350" font-size="102" font-weight="950" fill="#D7EFE5">开放</text>
-    <text x="-10" y="1040" font-size="120" font-weight="950" fill="#D7EFE5">利他</text>
-    <text x="666" y="1120" font-size="116" font-weight="950" fill="#D7EFE5">空杯</text>
-  </g>
-
-  <image href="${escapeXml(logoHref)}" x="72" y="72" width="190" height="124" clip-path="url(#logoClip)" preserveAspectRatio="xMidYMid meet"/>
-  <rect x="72" y="72" width="190" height="124" rx="26" fill="none" stroke="#D7EFE5" stroke-opacity="0.34" stroke-width="2"/>
-
-  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
-    <text x="292" y="114" font-size="24" font-weight="900" fill="#F7EFD6" letter-spacing="4">AI TOKEN IDENTITY</text>
-    <text x="292" y="152" font-size="18" font-weight="700" fill="#D7EFE5" fill-opacity="0.86" letter-spacing="2">个人消耗画像 · 生财有术主题版</text>
-    <rect x="798" y="88" width="158" height="54" rx="27" fill="#004740" fill-opacity="0.72" stroke="#D7EFE5" stroke-opacity="0.36"/>
-    <text x="877" y="123" text-anchor="middle" font-size="20" font-weight="900" fill="#F7EFD6">2026 版</text>
-  </g>
-
-  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
-    <rect x="72" y="270" width="406" height="58" rx="29" fill="#004740" fill-opacity="0.42" stroke="#D7EFE5" stroke-opacity="0.18"/>
-    <circle cx="106" cy="299" r="7" fill="#D7EFE5"/>
-    <text x="128" y="307" font-size="24" font-weight="900" fill="#F7EFD6">没想到，我把 AI 用成了</text>
-    <text x="72" y="496" font-size="124" font-weight="950" fill="#F7EFD6" letter-spacing="0">${escapeXml(identity.title)}</text>
-    <text x="76" y="560" font-size="34" font-weight="900" fill="#D7EFE5">不是在消耗，是把想法炼成结果。</text>
-    <text x="76" y="610" font-size="26" font-weight="650" fill="#D7EFE5" fill-opacity="0.82">方案、代码、文档、原型，每一次调用都应该更接近交付。</text>
-  </g>
-
-  <g filter="url(#shadow)" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
-    <rect x="72" y="716" width="936" height="268" rx="34" fill="#003F39" fill-opacity="0.82" stroke="#D7EFE5" stroke-opacity="0.22"/>
-    <text x="116" y="784" font-size="21" font-weight="900" fill="#D7EFE5" letter-spacing="8">TOTAL TOKENS</text>
-    <text x="116" y="896" font-size="104" font-weight="950" fill="#F7EFD6">${escapeXml(totalLabel)}</text>
-    <text x="666" y="890" font-size="28" font-weight="900" fill="#D7EFE5">tokens</text>
-    <rect x="116" y="928" width="610" height="18" rx="9" fill="#D7EFE5" fill-opacity="0.18"/>
-    <rect x="116" y="928" width="${progressWidth}" height="18" rx="9" fill="#00A889"/>
-    <rect x="116" y="928" width="${Math.max(90, Math.round(progressWidth * 0.66))}" height="18" rx="9" fill="#D7EFE5" fill-opacity="0.92"/>
-    <text x="116" y="966" font-size="19" font-weight="800" fill="#D7EFE5" fill-opacity="0.82">${hasPercentile ? `高于 ${percentLabel} 用户` : `称号进度 ${percentLabel}`} · 可隐藏具体数字</text>
-    <circle cx="848" cy="850" r="82" fill="#00826F" stroke="#D7EFE5" stroke-opacity="0.42" stroke-width="2"/>
-    <text x="848" y="824" text-anchor="middle" font-size="21" font-weight="900" fill="#D7EFE5">${percentTop}</text>
-    <text x="848" y="878" text-anchor="middle" font-size="54" font-weight="950" fill="#F7EFD6">${percentLabel}</text>
-    <text x="848" y="910" text-anchor="middle" font-size="18" font-weight="900" fill="#D7EFE5">${percentBottom}</text>
-  </g>
-
-  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
-    <text x="72" y="1076" font-size="22" font-weight="950" fill="#F7EFD6" letter-spacing="4">称号刻度</text>
-    <line x1="82" y1="1132" x2="998" y2="1132" stroke="#D7EFE5" stroke-opacity="0.24" stroke-width="10" stroke-linecap="round"/>
-    <line x1="82" y1="1132" x2="${markerX}" y2="1132" stroke="#00A889" stroke-width="10" stroke-linecap="round"/>
-    ${tierScaleSvg}
-  </g>
-
-  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
-    <rect x="72" y="1256" width="704" height="86" rx="28" fill="#004740" fill-opacity="0.58" stroke="#D7EFE5" stroke-opacity="0.24"/>
-    <text x="108" y="1310" font-size="27" font-weight="950" fill="#F7EFD6">${escapeXml(quote)}</text>
-    <rect x="830" y="1242" width="132" height="132" rx="28" fill="#004740" stroke="#D7EFE5" stroke-opacity="0.30"/>
-    <g fill="#F7EFD6"><rect x="850" y="1262" width="20" height="20"/><rect x="878" y="1262" width="20" height="20"/><rect x="924" y="1262" width="20" height="20"/><rect x="850" y="1290" width="20" height="20"/><rect x="896" y="1290" width="20" height="20"/><rect x="924" y="1290" width="20" height="20"/><rect x="878" y="1318" width="20" height="20"/><rect x="896" y="1318" width="20" height="20"/><rect x="850" y="1346" width="20" height="20"/><rect x="924" y="1346" width="20" height="20"/></g>
-    <text x="72" y="1412" font-size="18" font-weight="700" fill="#D7EFE5" fill-opacity="0.70">OpenToken Island 生成 · 本地统计 · 不上传明细</text>
-  </g>
+  <foreignObject width="${WIDTH}" height="${HEIGHT}">
+    <div xmlns="http://www.w3.org/1999/xhtml">
+      <style>${style}</style>
+      ${fragment}
+    </div>
+  </foreignObject>
 </svg>`;
+  }
+
+  async function loadPosterTemplateHtml(templateUrl = TEMPLATE_URL) {
+    const response = await fetch(templateUrl, { cache: "force-cache" });
+    if (!response.ok) throw new Error(`Failed to load poster template: ${response.status}`);
+    return response.text();
   }
 
   function blobToDataUrl(blob) {
@@ -219,7 +252,7 @@
     });
   }
 
-  async function loadLogoDataUrl(logoUrl = LOGO_URL) {
+  async function loadLogoDataUrl(logoUrl = "./assets/scys/icon_topnav.png") {
     const response = await fetch(logoUrl, { cache: "force-cache" });
     if (!response.ok) throw new Error(`Failed to load poster logo: ${response.status}`);
     return blobToDataUrl(await response.blob());
@@ -267,8 +300,8 @@
   }
 
   async function downloadSharePoster(summary, options = {}) {
-    const logoHref = options.logoHref || await loadLogoDataUrl(options.logoUrl || LOGO_URL);
-    const svg = buildSharePosterSvg(summary, { ...options, logoHref });
+    const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
+    const svg = buildSharePosterSvg(summary, { ...options, templateHtml });
     const blob = options.renderSvg ? await options.renderSvg(svg) : await svgToPngBlob(svg);
     const fileName = options.fileName || "opentoken-token-identity.png";
     const shareTarget = options.shareTarget || (typeof navigator === "object" ? navigator : null);
@@ -280,7 +313,7 @@
         await shareTarget.share({
           files: [file],
           title: "AI Token Identity",
-          text: "我的 AI Token 消耗身份",
+          text: "我的 AI 修为快照",
         });
         return { action: "shared", fileName };
       }
@@ -292,10 +325,12 @@
   }
 
   return {
+    buildSharePosterHtml,
     buildSharePosterSvg,
     downloadSharePoster,
     getTokenIdentity,
     loadLogoDataUrl,
+    loadPosterTemplateHtml,
     svgToPngBlob,
   };
 });
