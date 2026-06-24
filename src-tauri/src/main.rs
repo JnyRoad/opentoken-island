@@ -35,8 +35,8 @@ const PANEL_HEIGHT: i32 = 700;
 const PANEL_SHADOW_PAD: i32 = 18;
 const PANEL_WINDOW_WIDTH: i32 = PANEL_WIDTH + PANEL_SHADOW_PAD * 2;
 const PANEL_WINDOW_HEIGHT: i32 = PANEL_HEIGHT + PANEL_SHADOW_PAD * 2;
-const ISLAND_WIDTH: i32 = 560;
-const ISLAND_HEIGHT: i32 = 118;
+const ISLAND_WIDTH: i32 = 576;
+const ISLAND_HEIGHT: i32 = 134;
 const FLOATING_MARGIN: i32 = 12;
 const PANEL_ANCHOR_GAP: i32 = 430;
 
@@ -402,9 +402,10 @@ fn ensure_island_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let url = external_url("island.html")?;
     WebviewWindowBuilder::new(app, ISLAND_LABEL, WebviewUrl::External(url))
         .title("OpenToken Island")
-        .inner_size(560.0, 118.0)
+        .inner_size(ISLAND_WIDTH as f64, ISLAND_HEIGHT as f64)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
         .focusable(false)
         .resizable(false)
         .skip_taskbar(true)
