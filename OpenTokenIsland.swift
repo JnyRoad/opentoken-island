@@ -11,10 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var eventTimer: Timer?
     private let contextMenu = NSMenu()
     private let port = 4174
+    private let serverRestartDelay: TimeInterval = 5
     private var lastIslandEventId: Int64 = 0
     private var unlockedBadgeTitles = Set<String>()
     private var didLoadInitialSnapshot = false
     private var didLoadIslandEventSnapshot = false
+    private var isTerminating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -36,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
         logIsland("app terminating")
         timer?.invalidate()
         eventTimer?.invalidate()
@@ -144,8 +147,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             "LOGNAME": user,
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         ]
-        try? process.run()
-        serverProcess = process
+        process.terminationHandler = { [weak self] process in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.logIsland("server exited status=\(process.terminationStatus) reason=\(process.terminationReason.rawValue)")
+                if self.serverProcess === process { self.serverProcess = nil }
+                self.scheduleServerRestart(reason: "server-exit")
+            }
+        }
+        do {
+            try process.run()
+            serverProcess = process
+            logIsland("server launched pid=\(process.processIdentifier)")
+        } catch {
+            logIsland("server launch failed error=\(error.localizedDescription)")
+            scheduleServerRestart(reason: "launch-failed")
+        }
+    }
+
+    private func scheduleServerRestart(reason: String) {
+        guard !isTerminating else { return }
+        logIsland("server restart scheduled reason=\(reason)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + serverRestartDelay) { [weak self] in
+            guard let self, !self.isTerminating, self.serverProcess == nil else { return }
+            self.logIsland("server restart starting reason=\(reason)")
+            self.startServer()
+        }
     }
 
     private func detectedNodeBinary(home: String) -> String {

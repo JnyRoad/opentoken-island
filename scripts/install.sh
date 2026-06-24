@@ -327,12 +327,15 @@ install_launch_agent() {
   <string>com.opentoken.island</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/open</string>
-    <string>-g</string>
-    <string>${APP_DIR}</string>
+    <string>${APP_DIR}/Contents/MacOS/${APP_NAME}</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>StandardOutPath</key>
   <string>${HOME}/.opentoken/island.launchd.log</string>
   <key>StandardErrorPath</key>
@@ -341,9 +344,14 @@ install_launch_agent() {
 </plist>
 PLIST
 
-  launchctl bootout "gui/$(id -u)" "${LAUNCH_AGENT_PATH}" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$(id -u)" "${LAUNCH_AGENT_PATH}"
-  launchctl enable "gui/$(id -u)/com.opentoken.island"
+  local domain
+  local service
+  domain="gui/$(id -u)"
+  service="${domain}/com.opentoken.island"
+  launchctl bootout "${domain}" "${LAUNCH_AGENT_PATH}" >/dev/null 2>&1 || true
+  launchctl enable "${service}"
+  launchctl bootstrap "${domain}" "${LAUNCH_AGENT_PATH}"
+  launchctl kickstart -k "${service}"
 }
 
 wait_for_local_api() {
@@ -445,8 +453,6 @@ main() {
   build_app
   install_app
   install_launch_agent
-
-  open -g "${APP_DIR}"
 
   if wait_for_local_api "${node_bin}"; then
     prime_initial_upload "${opentoken_bin}" "${node_bin}"
