@@ -7,6 +7,7 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
 const { buildBattleReport } = require("./lib/island-report");
+const { buildLeaderboardEndpoint, LEADERBOARD_ENTRY_LIMIT } = require("./lib/leaderboard-endpoint");
 const {
   corsHeaders: localCorsHeaders,
   requireTrustedOrigin: requireLocalTrustedOrigin,
@@ -28,7 +29,6 @@ const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
 const MAX_UPLOAD_BODY_BYTES = 5 * 1024 * 1024;
 
-const LEADERBOARD_LIMIT = 500;
 const LEADERBOARD_MAX_ATTEMPTS = 4;
 const LEADERBOARD_RETRY_DELAY_MS = 900;
 const serveStatic = createStaticFileHandler(ROOT);
@@ -316,14 +316,17 @@ function sleep(ms) {
 }
 
 async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
-  const endpoint = `https://scys.com/tokenrank/api/subapp/leaderboard?board=total&range=today&limit=${LEADERBOARD_LIMIT}`;
+  const endpoint = buildLeaderboardEndpoint(state.userId);
   let lastResult = null;
 
   for (let attempt = 0; attempt < LEADERBOARD_MAX_ATTEMPTS; attempt += 1) {
     const result = await requestText("GET", endpoint, "", { accept: "application/json" });
     lastResult = result;
     const entries = Array.isArray(result.json?.entries) ? result.json.entries : [];
-    const board = computeLeaderboard(entries, summary, previousRank, state.userId, { limit: LEADERBOARD_LIMIT });
+    const board = computeLeaderboard(entries, summary, previousRank, state.userId, {
+      limit: LEADERBOARD_ENTRY_LIMIT,
+      myRank: result.json?.myRank,
+    });
 
     if (board) {
       const leaderboard = { updatedAt: new Date().toISOString(), uploadId, ...board };

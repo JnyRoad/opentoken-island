@@ -147,6 +147,78 @@ test("computeLeaderboard confirms rank 1 when public leaderboard score equals ra
   assert.equal(board.next.userId, "7183445");
 });
 
+test("computeLeaderboard confirms rank from validated myRank when own entry is outside entries", () => {
+  const entries = [
+    { userId: "above", rank: 5, score: 500, name: "Above", byTool: { codex: 500 } },
+    { userId: "below", rank: 7, score: 400, name: "Below", byTool: { codex: 400 } },
+  ];
+  const board = computeLeaderboard(entries, {
+    total: 450,
+    byTool: { codex: 450 },
+  }, null, "6466517", {
+    myRank: { rank: 6, score: 450 },
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.userId, "6466517");
+  assert.equal(board.own.rank, 6);
+  assert.equal(board.own.score, 450);
+  assert.equal(board.own.estimated, undefined);
+  assert.equal(board.previous.userId, "above");
+  assert.equal(board.next.userId, "below");
+});
+
+test("computeLeaderboard prefers validated myRank over same-score entry with another user id", () => {
+  const entries = [
+    { userId: "collision", rank: 8, score: 450, name: "Collision", byTool: { codex: 450 } },
+  ];
+  const board = computeLeaderboard(entries, {
+    total: 450,
+    byTool: { codex: 450 },
+  }, null, "6466517", {
+    limit: 100,
+    myRank: { rank: 250, score: 450 },
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.userId, "6466517");
+  assert.equal(board.own.rank, 250);
+  assert.equal(board.next, null);
+});
+
+test("computeLeaderboard ignores stale myRank when its score differs from the upload summary", () => {
+  const board = computeLeaderboard([], {
+    total: 450,
+    byTool: { codex: 450 },
+  }, null, "6466517", {
+    myRank: { rank: 6, score: 449 },
+  });
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard does not borrow top entry as next when myRank is outside fetched entries", () => {
+  const entries = Array.from({ length: 100 }, (_, index) => ({
+    userId: `u${index + 1}`,
+    rank: index + 1,
+    score: 1000 - index,
+    name: `User ${index + 1}`,
+  }));
+  const board = computeLeaderboard(entries, {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    limit: 100,
+    myRank: { rank: 250, score: 100 },
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 250);
+  assert.equal(board.previous, null);
+  assert.equal(board.next, null);
+  assert.equal(board.leadOverNext, 0);
+});
+
 test("computeLeaderboard does not confirm a stale cached user id when score changed", () => {
   const entries = [
     { userId: "me", rank: 4, score: 100, name: "Me", byTool: { codex: 100 } },
@@ -173,7 +245,7 @@ test("computeLeaderboard does not estimate a rank from an empty leaderboard", ()
 });
 
 test("computeLeaderboard does not estimate a precise rank beyond a truncated leaderboard", () => {
-  const entries = Array.from({ length: 500 }, (_, index) => ({
+  const entries = Array.from({ length: 100 }, (_, index) => ({
     userId: `u${index + 1}`,
     rank: index + 1,
     score: 1000 - index,
@@ -184,7 +256,7 @@ test("computeLeaderboard does not estimate a precise rank beyond a truncated lea
     total: 100,
     normalized: 100,
     normalizedByTool: { codex: 100 },
-  }, null, "", { limit: 500 });
+  }, null, "", { limit: 100 });
   assert.equal(board, null);
 });
 
