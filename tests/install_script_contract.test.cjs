@@ -11,6 +11,11 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), "utf8");
 }
 
+test("installer script is executable because build-pkg invokes it directly", () => {
+  const mode = fs.statSync(path.join(root, "scripts", "install.sh")).mode;
+  assert.ok(mode & 0o111, "scripts/install.sh must keep an executable bit");
+});
+
 test("installer primes an initial upload after the local API is ready", () => {
   const installScript = read("scripts/install.sh");
   const installLaunchAgent = installScript.lastIndexOf("  install_launch_agent");
