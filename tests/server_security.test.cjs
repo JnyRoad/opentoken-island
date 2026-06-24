@@ -102,6 +102,7 @@ async function startIslandServer(t, options = {}) {
     cwd: root,
     env: {
       ...process.env,
+      ...(options.env || {}),
       HOME: home,
       OPENTOKEN_ISLAND_PORT: String(port),
       OPENTOKEN_BIN: options.opentokenBin || process.execPath,
@@ -140,6 +141,24 @@ async function startFakeUpstream(t) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
   return { port: server.address().port, requests };
+}
+
+async function startFakeLeaderboard(t, { delayMs = 0, entries = [] } = {}) {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push({ method: req.method, url: req.url });
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ entries }));
+    }, delayMs);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  return {
+    port: server.address().port,
+    requests,
+    url: `http://127.0.0.1:${server.address().port}/tokenrank/api/subapp/leaderboard?board=total&range=today&limit=500`,
+  };
 }
 
 test("health endpoint identifies island without running opentoken service status", async (t) => {
@@ -237,6 +256,221 @@ test("state-changing API commands require the local client token", async (t) => 
   });
   assert.equal(allowed.status, 200);
   assert.equal(fs.readFileSync(marker, "utf8"), "ran");
+});
+
+test("manual summary refresh requires the local client token before the first upload", async (t) => {
+  const home = tempDir("home");
+  const { port } = await startIslandServer(t, { home });
+
+  const denied = await request(port, { path: "/api/summary?refresh=1" });
+  assert.equal(denied.status, 403);
+
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const allowed = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  assert.equal(allowed.status, 200);
+  assert.equal(JSON.parse(allowed.body).waiting, true);
+});
+
+test("manual summary refresh ignores stale previous rank from another upload", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    entries: [
+      { userId: "me", rank: 3, score: 10, byTool: { codex: 10 } },
+    ],
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 10,
+          normalized: 10,
+          byTool: { codex: 10 },
+          normalizedByTool: { codex: 10 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+      leaderboard: {
+        uploadId: "old-upload",
+        updatedAt: "2026-06-24T03:00:00.000Z",
+        own: { userId: "me", rank: 9, score: 100, byTool: { codex: 100 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(summary.rank, 3);
+  assert.equal(summary.rankDelta, 0);
+});
+
+test("automatic summary refresh runs once in the background without blocking summary responses", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    delayMs: 250,
+    entries: [
+      { userId: "me", rank: 3, score: 100, byTool: { codex: 100 } },
+    ],
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:00:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+      leaderboard: {
+        uploadId: "current-upload",
+        updatedAt: "2026-06-24T03:00:00.000Z",
+        own: { rank: 4, score: 100, byTool: { codex: 100 }, estimated: true },
+        estimated: true,
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+
+  const started = Date.now();
+  const [first, second] = await Promise.all([
+    request(port, { path: "/api/summary" }),
+    request(port, { path: "/api/summary" }),
+  ]);
+  const elapsedMs = Date.now() - started;
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.ok(elapsedMs < 180, `summary responses waited ${elapsedMs}ms`);
+  assert.equal(leaderboard.requests.length, 1);
+
+  await waitUntil(() => {
+    const state = JSON.parse(fs.readFileSync(path.join(configDir, "island-state.json"), "utf8"));
+    return state.leaderboard?.own?.rank === 3 && state.leaderboard?.estimated === false;
+  });
+});
+
+test("automatic summary refresh does not attach a stale leaderboard rank to the current upload", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, { delayMs: 250, entries: [] });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: {
+        uploadId: "new-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 10,
+          normalized: 10,
+          byTool: { codex: 10 },
+          normalizedByTool: { codex: 10 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+      leaderboard: {
+        uploadId: "old-upload",
+        updatedAt: "2026-06-24T03:00:00.000Z",
+        own: { userId: "me", rank: 1, score: 100, byTool: { codex: 100 } },
+        gapToPrevious: 0,
+        leadOverNext: 50,
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+
+  const response = await request(port, { path: "/api/summary" });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(summary.source, "upload");
+  assert.equal(summary.total, 10);
+  assert.equal(summary.rank, null);
+  assert.equal(leaderboard.requests.length, 1);
+});
+
+test("upload proxy refresh ignores stale previous rank from another upload", async (t) => {
+  const upstream = await startFakeUpstream(t);
+  const leaderboard = await startFakeLeaderboard(t, {
+    entries: [
+      { userId: "me", rank: 3, score: 10, byTool: { codex: 10 } },
+    ],
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      webhook_url: `http://127.0.0.1:${upstream.port}/tokenrank/api/subapp/u/account`,
+    })
+  );
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: { uploadId: "current-before-upload" },
+      leaderboard: {
+        uploadId: "old-upload",
+        updatedAt: "2026-06-24T03:00:00.000Z",
+        own: { userId: "me", rank: 9, score: 100, byTool: { codex: 100 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+
+  const response = await request(port, {
+    path: "/tokenrank/api/subapp/u/account",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requestId: "B",
+      rows: [{ date: "2026-06-24", tool: "codex", input: 10, normalized: 10 }],
+    }),
+  });
+  const state = JSON.parse(fs.readFileSync(path.join(configDir, "island-state.json"), "utf8"));
+
+  assert.equal(response.status, 200);
+  assert.equal(state.leaderboard.own.rank, 3);
+  assert.equal(state.leaderboard.rankDelta, 0);
 });
 
 test("concurrent upload proxy writes coherent lastUpload records", async (t) => {

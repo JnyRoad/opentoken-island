@@ -18,6 +18,7 @@ const {
   applyLeaderboardForUpload,
   applyUploadUpstream,
   isCurrentUpload,
+  shouldRefreshLeaderboard,
 } = require("./lib/upload-state");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
@@ -31,9 +32,12 @@ const MAX_UPLOAD_BODY_BYTES = 5 * 1024 * 1024;
 
 const LEADERBOARD_MAX_ATTEMPTS = 4;
 const LEADERBOARD_RETRY_DELAY_MS = 900;
+const PENDING_LEADERBOARD_REFRESH_MS = 60000;
+const CONFIRMED_LEADERBOARD_REFRESH_MS = 300000;
 const serveStatic = createStaticFileHandler(ROOT);
 
 let state = loadState();
+let leaderboardRefreshPromise = null;
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
 function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false } = {}) {
@@ -352,6 +356,43 @@ async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
   return state.leaderboard;
 }
 
+function markLeaderboardRefreshAttempt(uploadId = "") {
+  const checkedAt = new Date().toISOString();
+  const current = String(state.leaderboard?.uploadId || "") === String(uploadId || "")
+    ? state.leaderboard || {}
+    : {};
+  const leaderboard = {
+    ...current,
+    uploadId,
+    board: current.board || "total",
+    range: current.range || "today",
+    lastRefreshAttemptAt: checkedAt,
+  };
+  if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return false;
+  saveState();
+  return true;
+}
+
+function previousRankForUpload(uploadId = "") {
+  if (String(state.leaderboard?.uploadId || "") !== String(uploadId || "")) return null;
+  const rank = Number(state.leaderboard?.own?.rank || 0);
+  return Number.isFinite(rank) && rank > 0 ? rank : null;
+}
+
+function scheduleLeaderboardRefresh(upload) {
+  if (leaderboardRefreshPromise) return;
+  const uploadId = upload.uploadId || "";
+  const previousRank = previousRankForUpload(uploadId);
+  if (!markLeaderboardRefreshAttempt(uploadId)) return;
+  leaderboardRefreshPromise = refreshLeaderboard(upload.summary, previousRank, uploadId)
+    .catch((error) => {
+      logIslandEvent("leaderboard auto refresh failed", { error: error.message });
+    })
+    .finally(() => {
+      leaderboardRefreshPromise = null;
+    });
+}
+
 function accountStatus() {
   const proxy = ensureProxyConfig();
   const webhook = proxy.upstreamUrl || "";
@@ -384,7 +425,7 @@ async function handleUploadProxy(req, res, url) {
   const body = bodyBuffer.toString("utf8");
   const payload = safeJson(body);
   const summary = summarizeRows(rowsFromPayload(payload));
-  const previousRank = state.leaderboard?.own?.rank ? Number(state.leaderboard.own.rank) : null;
+  const previousRank = previousRankForUpload(state.lastUpload?.uploadId || "");
   const uploadId = crypto.randomUUID();
 
   const uploadRecord = {
@@ -488,10 +529,19 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === "/api/summary") {
-    if (url.searchParams.get("refresh") === "1" && state.lastUpload?.summary) {
-      if (!requireApiToken(req, res)) return;
+    const forceRefresh = url.searchParams.get("refresh") === "1";
+    if (forceRefresh && !requireApiToken(req, res)) return;
+    const autoRefresh = shouldRefreshLeaderboard(state, {
+      pendingRefreshMs: PENDING_LEADERBOARD_REFRESH_MS,
+      confirmedRefreshMs: CONFIRMED_LEADERBOARD_REFRESH_MS,
+    });
+    if ((forceRefresh || autoRefresh) && state.lastUpload?.summary) {
       const upload = state.lastUpload;
-      await refreshLeaderboard(upload.summary, state.leaderboard?.own?.rank || null, upload.uploadId || "");
+      if (forceRefresh) {
+        await refreshLeaderboard(upload.summary, previousRankForUpload(upload.uploadId || ""), upload.uploadId || "");
+      } else {
+        scheduleLeaderboardRefresh(upload);
+      }
     }
     return json(req, res, 200, {
       ...buildSummary({ lastUpload: state.lastUpload, leaderboard: state.leaderboard }),
