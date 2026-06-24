@@ -164,7 +164,9 @@ test("native island window is sized for transparent padding and clears WKWebView
   assert.match(swift, /panel\.isOpaque = false/);
   assert.match(swift, /panel\.backgroundColor = \.clear/);
   assert.match(swift, /panel\.hasShadow = false/);
-  assert.match(swift, /webView\.isOpaque = false/);
-  assert.match(swift, /webView\.scrollView\.drawsBackground = false/);
-  assert.match(swift, /webView\.scrollView\.backgroundColor = \.clear/);
+  assert.match(swift, /webView\.wantsLayer = true/);
+  assert.match(swift, /webView\.layer\?\.backgroundColor = NSColor\.clear\.cgColor/);
+  assert.match(swift, /webView\.setValue\(false, forKey: "drawsBackground"\)/);
+  assert.doesNotMatch(swift, /webView\.isOpaque = false/);
+  assert.doesNotMatch(swift, /webView\.scrollView/);
 });

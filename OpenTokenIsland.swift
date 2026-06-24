@@ -108,9 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        webView.isOpaque = false
-        webView.scrollView.drawsBackground = false
-        webView.scrollView.backgroundColor = .clear
+        webView.wantsLayer = true
+        webView.layer?.backgroundColor = NSColor.clear.cgColor
         webView.setValue(false, forKey: "drawsBackground")
         webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/island.html")!))
         panel.contentView = webView
