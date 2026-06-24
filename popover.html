@@ -152,7 +152,16 @@ async function sharePoster() {
   shareLabel.textContent = 'Generating...';
   try {
     if (!window.OpenTokenSharePoster) throw new Error('Share poster module unavailable');
-    const result = await window.OpenTokenSharePoster.downloadSharePoster(summary);
+    const posterOptions = {
+      rank: summary.rank,
+      rankLabel: summary.rankLabel,
+      rankDelta: summary.rankDelta,
+      rankEstimated: summary.rankEstimated,
+      gapToPreviousLabel: summary.gapToPreviousLabel,
+      leadOverNextLabel: summary.leadOverNextLabel,
+      templateUrl: './assets/share-poster-template.html'
+    };
+    const result = await window.OpenTokenSharePoster.downloadSharePoster(summary, posterOptions);
     shareLabel.textContent = result.action === 'shared' ? 'Shared' : 'Started';
     shareButton.title = result.action === 'shared'
       ? 'Shared with the system share sheet'

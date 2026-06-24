@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenToken Island · AI Token 身份战报</title>
+<style>
+  :root{
+    /* 生财有术「绿金」主题 —— 锁定，禁止新增其它色相 */
+    --deep:   #004740;  /* 深绿背景 */
+    --main:   #00826F;  /* 主绿 */
+    --mid:    #005B50;  /* 中绿 */
+    --bright: #00A889;  /* 亮绿：强调 / 进度 / 上升 */
+    --mint:   #D7EFE5;  /* 浅薄荷：次要文字 */
+    --gold:   #F7EFD6;  /* 米金：主标题 / 高亮数字 */
+
+    --font: "PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,system-ui,sans-serif;
+  }
+
+  *{ margin:0; padding:0; box-sizing:border-box; }
+
+  html,body{
+    width:100%; min-height:100%;
+    background:#012420;
+    font-family:var(--font);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  /* 预览舞台：把 1080×1920 海报等比缩放到视口内，导出/截图仍是原生像素 */
+  .stage{
+    min-height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    padding:24px;
+  }
+  .fit{
+    width:1080px; height:1920px;
+    transform-origin:center center;
+    transform:scale(min(calc((100vw - 48px)/1080), calc((100vh - 48px)/1920)));
+  }
+
+  .poster{
+    position:relative;
+    width:1080px; height:1920px;
+    overflow:hidden;
+    color:var(--gold);
+    background:
+      radial-gradient(120% 70% at 82% 6%, rgba(0,168,137,.42), rgba(0,168,137,0) 60%),
+      radial-gradient(90% 55% at 8% 96%, rgba(215,239,229,.14), rgba(215,239,229,0) 62%),
+      linear-gradient(150deg, var(--deep) 0%, var(--main) 52%, var(--mid) 100%);
+  }
+
+  /* —— 背景低调装饰层 —— */
+  .grid,.rings,.noise{ position:absolute; inset:0; pointer-events:none; }
+  .grid{
+    background-image:
+      linear-gradient(rgba(215,239,229,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(215,239,229,.05) 1px, transparent 1px);
+    background-size:72px 72px;
+    mask-image:radial-gradient(130% 100% at 50% 30%, #000 55%, transparent 100%);
+  }
+  .rings circle{ fill:none; stroke:var(--mint); }
+
+  /* —— 内容容器：上下安全边距 —— */
+  .frame{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    padding:96px 84px 88px;
+  }
+
+  /* —— 顶部品牌区 —— */
+  .brand{ display:flex; align-items:center; gap:30px; }
+  .logo{
+    flex:none; width:138px; height:138px; border-radius:30px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    line-height:1; font-weight:900; font-size:36px; letter-spacing:.5px;
+    background:linear-gradient(160deg, rgba(0,71,64,.85), rgba(0,46,42,.9));
+    border:1.5px solid rgba(215,239,229,.32);
+    box-shadow:inset 0 1px 0 rgba(215,239,229,.18);
+  }
+  .logo b{ color:var(--gold); }
+  .logo i{ color:var(--bright); font-style:normal; margin-top:4px; }
+  .brand-txt{ display:flex; flex-direction:column; gap:9px; }
+  .brand-txt .t1{ font-size:30px; font-weight:900; letter-spacing:5px; color:var(--gold); }
+  .brand-txt .t2{ font-size:21px; font-weight:600; letter-spacing:.5px; color:var(--mint); opacity:.86; }
+  .badge2026{
+    margin-left:auto; align-self:flex-start;
+    padding:14px 26px; border-radius:30px;
+    font-size:24px; font-weight:900; color:var(--gold);
+    background:rgba(0,71,64,.6);
+    border:1.5px solid rgba(215,239,229,.34);
+  }
+
+  /* —— 主视觉：称号（全场最大） —— */
+  .hero{ margin-top:64px; }
+  .kicker{
+    display:inline-flex; align-items:center; gap:16px;
+    padding:15px 30px 15px 24px; border-radius:34px;
+    background:rgba(0,71,64,.45);
+    border:1.5px solid rgba(215,239,229,.2);
+    font-size:27px; font-weight:800; color:var(--gold);
+  }
+  .kicker .dot{ width:15px; height:15px; border-radius:50%; background:var(--bright); box-shadow:0 0 18px var(--bright); }
+  .title{
+    margin-top:28px;
+    font-size:224px; font-weight:900; line-height:.98;
+    letter-spacing:2px; color:var(--gold); white-space:nowrap;
+    text-shadow:0 14px 60px rgba(0,33,30,.55);
+  }
+  .title .accent{
+    display:block; height:14px; width:172px; margin-top:26px; border-radius:8px;
+    background:linear-gradient(90deg, var(--bright), rgba(0,168,137,0));
+  }
+  .subtitle{ margin-top:26px; font-size:38px; font-weight:700; color:var(--mint); }
+
+  /* —— 排名区（次于称号） —— */
+  .rank{
+    margin-top:52px;
+    padding:46px 52px;
+    border-radius:40px;
+    background:linear-gradient(180deg, rgba(0,63,57,.92), rgba(0,46,42,.92));
+    border:1.5px solid rgba(215,239,229,.2);
+    box-shadow:0 26px 60px rgba(0,33,30,.45);
+  }
+  .rank-head{ display:flex; align-items:flex-end; gap:24px; }
+  .rank-label{ font-size:24px; font-weight:800; letter-spacing:3px; color:var(--mint); opacity:.9; }
+  .rank-row{ margin-top:14px; display:flex; align-items:center; gap:28px; }
+  .rank-num{ font-size:136px; font-weight:900; line-height:.86; color:var(--gold); letter-spacing:-2px; }
+  .delta{
+    display:inline-flex; align-items:center; gap:10px;
+    padding:14px 24px; border-radius:24px;
+    font-size:40px; font-weight:900;
+  }
+  .delta.up{
+    color:var(--bright);
+    background:rgba(0,168,137,.16);
+    border:1.5px solid rgba(0,168,137,.6);
+  }
+  .delta.down{
+    color:var(--mint);
+    background:rgba(215,239,229,.10);
+    border:1.5px solid rgba(215,239,229,.36);
+  }
+  .delta svg{ display:block; }
+  .gap-cards{ margin-top:40px; display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  .gap-card{
+    padding:30px 32px; border-radius:26px;
+    background:rgba(0,71,64,.5);
+    border:1.5px solid rgba(215,239,229,.16);
+  }
+  .gap-card .lab{ font-size:25px; font-weight:700; color:var(--mint); opacity:.92; }
+  .gap-card .val{ margin-top:14px; font-size:62px; font-weight:900; color:var(--gold); line-height:1; }
+  .gap-card .val small{ font-size:27px; font-weight:700; color:var(--mint); margin-left:8px; }
+  .gap-card.lead{ border-color:rgba(0,168,137,.4); }
+  .gap-card.lead .val{ color:var(--bright); }
+
+  /* —— Token 总量卡（第三） —— */
+  .total{
+    margin-top:30px;
+    display:flex; align-items:flex-end; justify-content:space-between;
+    padding:36px 52px; border-radius:36px;
+    background:rgba(0,71,64,.4);
+    border:1.5px solid rgba(215,239,229,.18);
+  }
+  .total .lab{ font-size:23px; font-weight:900; letter-spacing:7px; color:var(--bright); }
+  .total .num{ margin-top:14px; font-size:106px; font-weight:900; line-height:.85; color:var(--gold); letter-spacing:-1px; }
+  .total .unit{ font-size:34px; font-weight:700; color:var(--mint); opacity:.85; padding-bottom:10px; }
+
+  /* —— 称号刻度进度条 —— */
+  .scale{ margin-top:auto; padding-top:48px; }
+  .scale-cap{ font-size:23px; font-weight:900; letter-spacing:5px; color:var(--gold); margin-bottom:36px; }
+  .track{ position:relative; height:10px; border-radius:6px; background:rgba(215,239,229,.2); }
+  .track .fill{ position:absolute; left:0; top:0; height:10px; width:{{SCALE_PROGRESS}}%; border-radius:6px;
+    background:linear-gradient(90deg, var(--main), var(--bright)); box-shadow:0 0 22px rgba(0,168,137,.55); }
+  .nodes{ position:absolute; inset:0; display:flex; justify-content:space-around; align-items:center; }
+  .node{ width:20px; height:20px; border-radius:50%; background:var(--mint); }
+  .node.done{ background:var(--bright); }
+  .node.cur{
+    width:42px; height:42px; background:var(--gold);
+    box-shadow:0 0 0 6px rgba(247,239,214,.18), 0 0 26px rgba(247,239,214,.5);
+  }
+  .node.future{ background:rgba(215,239,229,.4); }
+  .ticks{ margin-top:30px; display:flex; justify-content:space-between; }
+  .tick{ flex:1; text-align:center; font-size:23px; font-weight:800; color:var(--mint); opacity:.7; }
+  .tick.cur{ color:var(--gold); opacity:1; font-size:28px; font-weight:900; }
+
+  /* —— 底部引用区 —— */
+  .footer{ margin-top:40px; }
+  .quote{
+    padding:36px 40px; border-radius:28px;
+    background:rgba(0,71,64,.46);
+    border:1.5px solid rgba(215,239,229,.2);
+    border-left:6px solid var(--bright);
+    font-size:33px; font-weight:900; color:var(--gold);
+  }
+  .meta{ margin-top:26px; font-size:23px; font-weight:600; color:var(--mint); opacity:.72; text-align:center; }
+</style>
+</head>
+<body>
+<div class="stage">
+ <div class="fit">
+  <!-- SHARE_POSTER_FRAGMENT_START -->
+  <div class="poster">
+    <div class="grid"></div>
+    <svg class="rings" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" preserveAspectRatio="none" aria-hidden="true">
+      <circle cx="985" cy="150" r="320" stroke-opacity=".11" stroke-width="2"/>
+      <circle cx="985" cy="150" r="215" stroke-opacity=".08" stroke-width="2"/>
+      <circle cx="985" cy="150" r="120" stroke-opacity=".06" stroke-width="2"/>
+    </svg>
+
+    <div class="frame">
+      <!-- 顶部品牌区 -->
+      <header class="brand">
+        <div class="logo"><b>Open</b><i>Token</i></div>
+        <div class="brand-txt">
+          <div class="t1">AI TOKEN IDENTITY</div>
+          <div class="t2">个人 AI 消耗画像 · 修为快照</div>
+        </div>
+        <div class="badge2026">2026 版</div>
+      </header>
+
+      <!-- 主视觉：称号 -->
+      <section class="hero">
+        <span class="kicker"><span class="dot"></span>我的 AI 修为，已修到</span>
+        <h1 class="title">{{REALM_TITLE}}<span class="accent"></span></h1>
+        <p class="subtitle">{{REALM_DESCRIPTION}}</p>
+      </section>
+
+      <!-- 排名区 -->
+      <section class="rank">
+        <div class="rank-head"><span class="rank-label">今日总榜排名</span></div>
+        <div class="rank-row">
+          <span class="rank-num">{{RANK_LABEL}}</span>
+          {{RANK_DELTA_BADGE}}
+        </div>
+        <div class="gap-cards">
+          <div class="gap-card">
+            <div class="lab">距上一名</div>
+            <div class="val">{{GAP_TO_PREVIOUS}}<small>{{GAP_TO_PREVIOUS_UNIT}}</small></div>
+          </div>
+          <div class="gap-card lead">
+            <div class="lab">领先下一名</div>
+            <div class="val">{{LEAD_OVER_NEXT}}<small>{{LEAD_OVER_NEXT_UNIT}}</small></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Token 总量 -->
+      <section class="total">
+        <div>
+          <div class="lab">TOTAL TOKENS</div>
+          <div class="num">{{TOTAL_LABEL}}</div>
+        </div>
+        <div class="unit">tokens</div>
+      </section>
+
+      <!-- 称号刻度进度条 -->
+      <section class="scale">
+        <div class="scale-cap">修为境界</div>
+        <div class="track">
+          <div class="fill"></div>
+          <div class="nodes">
+            <span class="node {{NODE_0_CLASS}}"></span>
+            <span class="node {{NODE_1_CLASS}}"></span>
+            <span class="node {{NODE_2_CLASS}}"></span>
+            <span class="node {{NODE_3_CLASS}}"></span>
+            <span class="node {{NODE_4_CLASS}}"></span>
+            <span class="node {{NODE_5_CLASS}}"></span>
+            <span class="node {{NODE_6_CLASS}}"></span>
+          </div>
+        </div>
+        <div class="ticks">
+          <span class="tick {{TICK_0_CLASS}}">炼气期</span>
+          <span class="tick {{TICK_1_CLASS}}">筑基期</span>
+          <span class="tick {{TICK_2_CLASS}}">金丹期</span>
+          <span class="tick {{TICK_3_CLASS}}">元婴期</span>
+          <span class="tick {{TICK_4_CLASS}}">化神期</span>
+          <span class="tick {{TICK_5_CLASS}}">大乘期</span>
+          <span class="tick {{TICK_6_CLASS}}">渡劫期</span>
+        </div>
+      </section>
+
+      <!-- 底部引用 -->
+      <footer class="footer">
+        <div class="quote">“我测了一下，原来我已经修到{{REALM_TITLE}}了。”</div>
+        <div class="meta">OpenToken Island 生成 · 本地统计 · 不上传明细</div>
+      </footer>
+    </div>
+  </div>
+  <!-- SHARE_POSTER_FRAGMENT_END -->
+ </div>
+</div>
+</body>
+</html>
