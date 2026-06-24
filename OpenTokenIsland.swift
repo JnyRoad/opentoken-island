@@ -85,8 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     private func showIsland(reason: String = "manual") {
         logIsland("showIsland requested reason=\(reason)")
-        let width: CGFloat = 560
-        let height: CGFloat = 118
+        let width: CGFloat = 576
+        let height: CGFloat = 134
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let frame = NSRect(
             x: screenFrame.midX - width / 2,
@@ -108,6 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        webView.wantsLayer = true
+        webView.layer?.backgroundColor = NSColor.clear.cgColor
         webView.setValue(false, forKey: "drawsBackground")
         webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/island.html")!))
         panel.contentView = webView

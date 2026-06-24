@@ -76,6 +76,21 @@ assert.match(
 );
 assert.match(
   mainRs,
+  /const ISLAND_WIDTH: i32 = 576;/,
+  "The island window must include transparent padding around the 560px card"
+);
+assert.match(
+  mainRs,
+  /const ISLAND_HEIGHT: i32 = 134;/,
+  "The island window must include transparent padding around the 118px card"
+);
+assert.match(
+  mainRs,
+  /WebviewWindowBuilder::new\(app, ISLAND_LABEL[\s\S]*\.inner_size\(ISLAND_WIDTH as f64, ISLAND_HEIGHT as f64\)[\s\S]*\.transparent\(true\)[\s\S]*\.shadow\(false\)/,
+  "The island must render in a transparent, shadowless, borderless layer sized for the padded card"
+);
+assert.match(
+  mainRs,
   /const PANEL_ANCHOR_GAP: i32 = 430;/,
   "The full tray panel should lift as far as possible above the Windows hidden-icons flyout"
 );

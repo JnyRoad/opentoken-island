@@ -9,6 +9,39 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), "utf8");
 }
 
+function cssRuleDeclarations(html, selector) {
+  const rules = [...html.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  const match = rules.find((rule) => rule[1].trim() === selector);
+  assert.ok(match, `missing CSS rule for ${selector}`);
+  return Object.fromEntries(
+    match[2]
+      .split(";")
+      .map((declaration) => declaration.trim())
+      .filter(Boolean)
+      .map((declaration) => {
+        const [property, ...valueParts] = declaration.split(":");
+        return [property.trim(), valueParts.join(":").trim().replace(/\s+/g, " ")];
+      })
+  );
+}
+
+function splitCssTopLevelList(value) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts;
+}
+
 test("desktop HTML uses only bundled runtime scripts", () => {
   for (const file of ["index.html", "popover.html", "island.html"]) {
     const html = read(file);
@@ -105,4 +138,35 @@ test("island banner labels estimated ranks as pending confirmation", () => {
   const html = read("island.html");
   assert.match(html, /data\.rankEstimated/);
   assert.match(html, /等待榜单确认/);
+});
+
+test("island banner leaves transparent chrome and avoids corner artwork", () => {
+  const html = read("island.html");
+  const rootStyle = cssRuleDeclarations(html, "html,body");
+  const bodyStyle = cssRuleDeclarations(html, "body");
+  const islandStyle = cssRuleDeclarations(html, ".island");
+  const islandShadows = splitCssTopLevelList(islandStyle["box-shadow"]);
+
+  assert.equal(rootStyle.background, "transparent");
+  assert.equal(bodyStyle.padding, "8px");
+  assert.equal(islandStyle.width, "calc(100vw - 16px)");
+  assert.equal(islandStyle.height, "calc(100vh - 16px)");
+  assert.ok(islandShadows.every((shadow) => shadow.startsWith("inset ")));
+  assert.doesNotMatch(html, /class="spark/);
+  assert.doesNotMatch(html, /class="mark/);
+  assert.doesNotMatch(html, /assets\/scys\/icon_topnav\.png/);
+});
+
+test("native island window is sized for transparent padding and clears WKWebView chrome", () => {
+  const swift = read("OpenTokenIsland.swift");
+  assert.match(swift, /let width: CGFloat = 576/);
+  assert.match(swift, /let height: CGFloat = 134/);
+  assert.match(swift, /panel\.isOpaque = false/);
+  assert.match(swift, /panel\.backgroundColor = \.clear/);
+  assert.match(swift, /panel\.hasShadow = false/);
+  assert.match(swift, /webView\.wantsLayer = true/);
+  assert.match(swift, /webView\.layer\?\.backgroundColor = NSColor\.clear\.cgColor/);
+  assert.match(swift, /webView\.setValue\(false, forKey: "drawsBackground"\)/);
+  assert.doesNotMatch(swift, /webView\.isOpaque = false/);
+  assert.doesNotMatch(swift, /webView\.scrollView/);
 });
