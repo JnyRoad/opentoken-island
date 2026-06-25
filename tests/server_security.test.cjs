@@ -143,13 +143,22 @@ async function startFakeUpstream(t) {
   return { port: server.address().port, requests };
 }
 
-async function startFakeLeaderboard(t, { delayMs = 0, entries = [] } = {}) {
+async function startFakeLeaderboard(t, { delayMs = 0, entries = [], myRank = null, responseForRequest = null } = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
-    requests.push({ method: req.method, url: req.url });
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+    requests.push({
+      method: req.method,
+      url: req.url,
+      limit: requestUrl.searchParams.get("limit"),
+      me: requestUrl.searchParams.get("me"),
+    });
     setTimeout(() => {
+      const payload = responseForRequest
+        ? responseForRequest(requestUrl)
+        : { entries, ...(myRank ? { myRank } : {}) };
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ entries }));
+      res.end(JSON.stringify(payload));
     }, delayMs);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -383,6 +392,489 @@ test("manual summary refresh ignores stale previous rank from another upload", a
   assert.equal(response.status, 200);
   assert.equal(summary.rank, 3);
   assert.equal(summary.rankDelta, 0);
+});
+
+test("manual summary refresh without user id keeps the public leaderboard lookup", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    entries: [
+      { userId: "me", rank: 3, score: 10, byTool: { codex: 10 } },
+    ],
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 10,
+          normalized: 10,
+          byTool: { codex: 10 },
+          normalizedByTool: { codex: 10 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(leaderboard.requests.length, 1);
+  assert.equal(leaderboard.requests[0].limit, "200");
+  assert.equal(leaderboard.requests[0].me, null);
+  assert.equal(summary.rank, 3);
+});
+
+test("manual summary refresh uses rank-only lookup when own rank is outside fetched entries", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: () => ({
+      entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+      myRank: { rank: 900, score: 100 },
+    }),
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-900",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(leaderboard.requests.length, 1);
+  assert.equal(leaderboard.requests[0].limit, "1");
+  assert.equal(leaderboard.requests[0].me, "member-900");
+  assert.equal(summary.rank, 900);
+  assert.equal(summary.rankEstimated, false);
+  assert.equal(summary.gapToPreviousLabel, "--");
+  assert.equal(summary.leadOverNextLabel, "--");
+});
+
+test("manual summary refresh fetches neighbors when own rank is inside fetched entries", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+          myRank: { rank: 114, score: 100 },
+        };
+      }
+      return {
+        entries: [
+          { userId: "member-113", rank: 113, score: 120, byTool: { codex: 120 } },
+          { userId: "member-114", rank: 114, score: 100, byTool: { codex: 100 } },
+          { userId: "member-115", rank: 115, score: 90, byTool: { codex: 90 } },
+        ],
+        myRank: { rank: 114, score: 100 },
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-114",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200"]);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.me), ["member-114", "member-114"]);
+  assert.equal(summary.rank, 114);
+  assert.equal(summary.gapToPrevious, 21);
+  assert.equal(summary.leadOverNext, 10);
+});
+
+test("manual summary refresh falls back to fetched entries when rank-only score is stale", async (t) => {
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+          myRank: { rank: 900, score: 80 },
+        };
+      }
+      return {
+        entries: [
+          { userId: "member-49", rank: 49, score: 130, byTool: { codex: 130 } },
+          { userId: "member-50", rank: 50, score: 100, byTool: { codex: 100 } },
+          { userId: "member-51", rank: 51, score: 90, byTool: { codex: 90 } },
+        ],
+        myRank: { rank: 900, score: 80 },
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-50",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200"]);
+  assert.equal(summary.rank, 50);
+  assert.equal(summary.gapToPrevious, 31);
+  assert.equal(summary.leadOverNext, 10);
+});
+
+test("manual summary refresh retries when full leaderboard window is temporarily empty", async (t) => {
+  let fullRequests = 0;
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+          myRank: { rank: 114, score: 100 },
+        };
+      }
+      fullRequests += 1;
+      if (fullRequests === 1) return { entries: [] };
+      return {
+        entries: [
+          { userId: "member-113", rank: 113, score: 120, byTool: { codex: 120 } },
+          { userId: "member-114", rank: 114, score: 100, byTool: { codex: 100 } },
+          { userId: "member-115", rank: 115, score: 90, byTool: { codex: 90 } },
+        ],
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-114",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200", "1", "200"]);
+  assert.equal(summary.rank, 114);
+  assert.equal(summary.gapToPrevious, 21);
+  assert.equal(summary.leadOverNext, 10);
+});
+
+test("manual summary refresh retries when full leaderboard window misses own rank", async (t) => {
+  let fullRequests = 0;
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+          myRank: { rank: 114, score: 100 },
+        };
+      }
+      fullRequests += 1;
+      if (fullRequests === 1) {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+        };
+      }
+      return {
+        entries: [
+          { userId: "member-113", rank: 113, score: 120, byTool: { codex: 120 } },
+          { userId: "member-114", rank: 114, score: 100, byTool: { codex: 100 } },
+          { userId: "member-115", rank: 115, score: 90, byTool: { codex: 90 } },
+        ],
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-114",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200", "1", "200"]);
+  assert.equal(summary.rank, 114);
+  assert.equal(summary.gapToPrevious, 21);
+  assert.equal(summary.leadOverNext, 10);
+});
+
+test("manual summary refresh retries when full leaderboard window has stale own score", async (t) => {
+  let fullRequests = 0;
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+          myRank: { rank: 114, score: 100 },
+        };
+      }
+      fullRequests += 1;
+      if (fullRequests === 1) {
+        return {
+          entries: [
+            { userId: "member-113", rank: 113, score: 120, byTool: { codex: 120 } },
+            { userId: "member-114", rank: 114, score: 80, byTool: { codex: 80 } },
+            { userId: "member-115", rank: 115, score: 70, byTool: { codex: 70 } },
+          ],
+        };
+      }
+      return {
+        entries: [
+          { userId: "member-113", rank: 113, score: 120, byTool: { codex: 120 } },
+          { userId: "member-114", rank: 114, score: 100, byTool: { codex: 100 } },
+          { userId: "member-115", rank: 115, score: 90, byTool: { codex: 90 } },
+        ],
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-114",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200", "1", "200"]);
+  assert.equal(summary.rank, 114);
+  assert.equal(summary.gapToPrevious, 21);
+  assert.equal(summary.leadOverNext, 10);
+});
+
+test("manual summary refresh retries when rank-only is missing and full window only has another same-score member", async (t) => {
+  let fullRequests = 0;
+  const leaderboard = await startFakeLeaderboard(t, {
+    responseForRequest: (requestUrl) => {
+      if (requestUrl.searchParams.get("limit") === "1") {
+        return {
+          entries: [{ userId: "leader", rank: 1, score: 1000, byTool: { codex: 1000 } }],
+        };
+      }
+      fullRequests += 1;
+      if (fullRequests === 1) {
+        return {
+          entries: [
+            { userId: "other-same-score", rank: 50, score: 100, byTool: { codex: 100 } },
+          ],
+        };
+      }
+      return {
+        entries: [
+          { userId: "member-49", rank: 49, score: 130, byTool: { codex: 130 } },
+          { userId: "member-50", rank: 50, score: 100, byTool: { codex: 100 } },
+          { userId: "member-51", rank: 51, score: 90, byTool: { codex: 90 } },
+        ],
+      };
+    },
+  });
+  const home = tempDir("home");
+  const configDir = path.join(home, ".opentoken");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "island-state.json"),
+    JSON.stringify({
+      userId: "member-50",
+      lastUpload: {
+        uploadId: "current-upload",
+        capturedAt: "2026-06-24T03:10:00.000Z",
+        summary: {
+          date: "2026-06-24",
+          total: 100,
+          normalized: 100,
+          byTool: { codex: 100 },
+          normalizedByTool: { codex: 100 },
+        },
+        upstream: { ok: true, status: 200, json: { accepted: 1 } },
+      },
+    })
+  );
+  const { port } = await startIslandServer(t, {
+    home,
+    env: { OPENTOKEN_LEADERBOARD_URL: leaderboard.url },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+
+  const response = await request(port, {
+    path: "/api/summary?refresh=1",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const summary = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(leaderboard.requests.map((entry) => entry.limit), ["1", "200", "1", "200"]);
+  assert.equal(summary.rank, 50);
+  assert.equal(summary.gapToPrevious, 31);
+  assert.equal(summary.leadOverNext, 10);
 });
 
 test("automatic summary refresh runs once in the background without blocking summary responses", async (t) => {

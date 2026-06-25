@@ -21,3 +21,10 @@ test("buildLeaderboardEndpoint includes me when a confirmed user id is known", (
   assert.equal(endpoint.searchParams.get("me"), "6466517");
   assert.equal(endpoint.searchParams.get("limit"), "200");
 });
+
+test("buildLeaderboardEndpoint can request only the current member rank", () => {
+  const endpoint = new URL(buildLeaderboardEndpoint("6466517", { limit: 1 }));
+
+  assert.equal(endpoint.searchParams.get("me"), "6466517");
+  assert.equal(endpoint.searchParams.get("limit"), "1");
+});
