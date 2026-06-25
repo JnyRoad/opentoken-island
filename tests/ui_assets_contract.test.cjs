@@ -64,8 +64,11 @@ test("popover exposes only wired action buttons", () => {
 
 test("browser prototype sends local API token for upload", () => {
   const html = read("index.html");
-  assert.match(html, /client-config/);
-  assert.match(html, /x-opentoken-island-token/);
+  const utils = read("assets/client-utils.js");
+  // client-config endpoint and token header live in the shared utility included by all views
+  assert.match(utils, /client-config/);
+  assert.match(utils, /x-opentoken-island-token/);
+  assert.match(html, /client-utils\.js/); // confirms the utility is loaded
   assert.doesNotMatch(html, /fetch\(`\$\{API_BASE\}\/upload`, \{ method: "POST" \}\)/);
 });
 

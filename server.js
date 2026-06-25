@@ -563,13 +563,21 @@ async function handleApi(req, res, url) {
   return json(req, res, 404, { ok: false, error: "Not found" });
 }
 
+let _serviceStatusCache = null;
+
 async function serviceStatus() {
+  const now = Date.now();
+  if (_serviceStatusCache && now - _serviceStatusCache.cachedAt < 30000) {
+    return _serviceStatusCache.value;
+  }
   const result = await run(OPENTOKEN, ["service", "status"], 15000);
-  return {
+  const value = {
     ok: result.ok,
     text: (result.stdout || result.stderr || result.message).trim(),
     running: /running|loaded|已运行|active/i.test(result.stdout + result.stderr),
   };
+  _serviceStatusCache = { value, cachedAt: now };
+  return value;
 }
 
 function json(req, res, status, body) {
