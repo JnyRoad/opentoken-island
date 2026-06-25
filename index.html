@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenToken Island Prototypes</title>
   <script src="./assets/vendor/lucide-lite.js"></script>
+  <script src="./assets/client-utils.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -1073,11 +1074,11 @@
               <i data-lucide="upload-cloud"></i>
               <span id="uploadLabel">Upload now</span>
             </button>
-            <button class="action-button" type="button">
+            <button id="pauseButton" class="action-button" type="button">
               <i data-lucide="pause"></i>
               Pause
             </button>
-            <button class="action-button icon-only" type="button" aria-label="Open logs">
+            <button id="openLogsButton" class="action-button icon-only" type="button" aria-label="Open logs">
               <i data-lucide="file-text"></i>
             </button>
           </div>
@@ -1194,7 +1195,9 @@
     const uploadLabel = document.querySelector("#uploadLabel");
     const dailyQuestCopy = document.querySelector("#dailyQuestCopy");
     const API_BASE = `${window.location.origin}/api`;
-    let apiToken = "";
+    const _client = createIslandClient({ layer: 'prototype', apiBase: API_BASE });
+    const tokenHeaders = () => _client.tokenHeaders();
+    const logClientEvent = (event, details) => _client.logClientEvent(event, details);
     let hideTimer;
 
     const events = {
@@ -1219,34 +1222,8 @@
     }
 
     async function loadClientConfig() {
-      const response = await fetch(`${API_BASE}/client-config`);
-      const data = await response.json();
-      apiToken = data.apiToken || "";
-      void logClientEvent("prototype.clientConfig.loaded", { hasToken: Boolean(apiToken) });
-    }
-
-    function tokenHeaders() {
-      return apiToken ? { "x-opentoken-island-token": apiToken } : {};
-    }
-
-    function logClientEvent(event, details = {}) {
-      if (!apiToken) return Promise.resolve(false);
-      const controller = typeof AbortController === "function" ? new AbortController() : null;
-      const timeout = controller ? setTimeout(() => controller.abort(), 1500) : null;
-      return fetch(`${API_BASE}/logs/event`, {
-        method: "POST",
-        headers: { ...tokenHeaders(), "content-type": "application/json" },
-        body: JSON.stringify({
-          layer: "prototype",
-          event,
-          flow: event,
-          details
-        }),
-        keepalive: true,
-        signal: controller && controller.signal
-      }).then(() => true).catch(() => false).finally(() => {
-        if (timeout) clearTimeout(timeout);
-      });
+      const token = await _client.loadClientConfig();
+      void logClientEvent("prototype.clientConfig.loaded", { hasToken: Boolean(token) });
     }
 
     function showEvent(type) {
@@ -1404,6 +1381,20 @@
       } finally {
         setLoading(false);
       }
+    });
+
+    document.getElementById("openLogsButton").addEventListener("click", async () => {
+      void logClientEvent("prototype.openLogs.click");
+      try {
+        await fetch(`${API_BASE}/logs/open`, { method: "POST", headers: tokenHeaders() });
+      } catch {
+        // best-effort; no UI change needed
+      }
+    });
+
+    document.getElementById("pauseButton").addEventListener("click", () => {
+      // Pause is not yet implemented in the backend.
+      void logClientEvent("prototype.pause.click");
     });
 
     document.addEventListener("keydown", (event) => {

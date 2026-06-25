@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenToken Island Popover</title>
   <script src="./assets/vendor/lucide-lite.js"></script>
+  <script src="./assets/client-utils.js"></script>
   <script src="./assets/share-poster.js"></script>
   <style>
     :root { color-scheme: dark; --bg:#050505; --panel:#111112; --line:rgba(255,255,255,.16); --ink:#f7f7f8; --muted:rgba(247,247,248,.62); --blue:#0a84ff; --green:#30d158; --gold:#d8bf85; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif; }
@@ -19,7 +20,11 @@
   </style>
 </head><body><main class="panel"><span class="symbol-bg"><img src="./assets/scys/icon_topnav.png" alt=""></span><div class="content"><header class="head"><div><p class="title">今日 OpenToken</p><p id="serviceText" class="sub">Loading opentoken service...</p></div><span class="live"><span class="dot"></span>live</span></header><div class="actions"><button id="uploadButton" class="btn primary"><i data-lucide="upload-cloud"></i><span id="uploadLabel">Upload now</span></button><button id="shareButton" class="btn"><i data-lucide="share-2"></i><span id="shareLabel">Share</span></button><button id="refreshButton" class="btn"><i data-lucide="refresh-cw"></i>Refresh</button><button id="openLogsButton" class="btn icon" aria-label="Open logs" title="Open logs"><i data-lucide="file-text"></i></button></div><section class="hero"><div><p class="label">Tokens</p><p id="totalValue" class="value">--</p></div><div id="rankValue" class="rank">#--</div></section><section class="game"><div class="card"><div class="level-line"><strong>今日进度</strong><span id="xpText">-- / 3 亿</span></div><div class="bar"><i id="xpFill"></i></div></div><div class="card battle"><div><strong id="rankDelta">#--</strong><span id="rankGap">排名状态<br>读取中</span></div></div></section><section id="toolList" class="tools"></section><section class="quests"><div class="quest"><i data-lucide="target"></i><div><strong>今日目标：冲到 3 亿</strong><span id="dailyQuestCopy">读取真实 token 数据中...</span></div><div class="xp">待确认</div></div><div class="quest"><i data-lucide="upload-cloud"></i><div><strong>上传状态</strong><span>等待 OpenToken 上报</span></div><div class="xp">等待</div></div></section></div></main><script>
 const API = '/api';
-let apiToken = '';
+const _client = createIslandClient({ layer: 'popover', apiBase: API });
+const tokenHeaders = (extra) => _client.tokenHeaders(extra);
+const logClientEvent = (event, details) => _client.logClientEvent(event, details);
+window.OpenTokenIslandLogEvent = logClientEvent;
+
 const $ = (selector) => document.querySelector(selector);
 let latestSummary = null;
 let lastIslandEventId = null;
@@ -31,39 +36,9 @@ function icons() {
 }
 
 async function loadClientConfig() {
-  const response = await fetch(API + '/client-config');
-  const data = await response.json();
-  apiToken = data.apiToken || '';
-  void logClientEvent('popover.clientConfig.loaded', { hasToken: Boolean(apiToken) });
+  await _client.loadClientConfig();
+  void logClientEvent('popover.clientConfig.loaded', { hasToken: Boolean(_client.getToken()) });
 }
-
-function tokenHeaders(extra = {}) {
-  return apiToken
-    ? { ...extra, 'x-opentoken-island-token': apiToken }
-    : extra;
-}
-
-function logClientEvent(event, details = {}) {
-  if (!apiToken) return Promise.resolve(false);
-  const controller = typeof AbortController === 'function' ? new AbortController() : null;
-  const timeout = controller ? setTimeout(() => controller.abort(), 1500) : null;
-  return fetch(API + '/logs/event', {
-    method: 'POST',
-    headers: tokenHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({
-      layer: 'popover',
-      event,
-      flow: event,
-      details
-    }),
-    keepalive: true,
-    signal: controller && controller.signal
-  }).then(() => true).catch(() => false).finally(() => {
-    if (timeout) clearTimeout(timeout);
-  });
-}
-
-window.OpenTokenIslandLogEvent = logClientEvent;
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({

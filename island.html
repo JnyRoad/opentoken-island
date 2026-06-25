@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <script src="./assets/vendor/lucide-lite.js"></script>
+  <script src="./assets/client-utils.js"></script>
   <style>
     :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial,sans-serif;--blue:#0a84ff;--scys-green:#36a590;--scys-gold:#d8bf85;--scys-orange:#ff8617}
     *{box-sizing:border-box}
@@ -44,38 +45,12 @@
     const metaEl = document.getElementById('meta');
     const trackFillEl = document.getElementById('trackFill');
     const API = '/api';
-    let apiToken = '';
+    const _client = createIslandClient({ layer: 'island', apiBase: API });
+    const tokenHeaders = (extra) => _client.tokenHeaders(extra);
+    const logClientEvent = (event, details) => _client.logClientEvent(event, details);
 
     async function loadClientConfig() {
-      const response = await fetch(API + '/client-config');
-      const data = await response.json();
-      apiToken = data.apiToken || '';
-    }
-
-    function tokenHeaders(extra = {}) {
-      return apiToken
-        ? { ...extra, 'x-opentoken-island-token': apiToken }
-        : extra;
-    }
-
-    function logClientEvent(event, details = {}) {
-      if (!apiToken) return Promise.resolve(false);
-      const controller = typeof AbortController === 'function' ? new AbortController() : null;
-      const timeout = controller ? setTimeout(() => controller.abort(), 1500) : null;
-      return fetch(API + '/logs/event', {
-        method: 'POST',
-        headers: tokenHeaders({ 'content-type': 'application/json' }),
-        body: JSON.stringify({
-          layer: 'island',
-          event,
-          flow: event,
-          details
-        }),
-        keepalive: true,
-        signal: controller && controller.signal
-      }).then(() => true).catch(() => false).finally(() => {
-        if (timeout) clearTimeout(timeout);
-      });
+      await _client.loadClientConfig();
     }
 
     // 灵动岛是纯展示层：文案、图标、右侧指标全部来自服务端算好的 data.report，
