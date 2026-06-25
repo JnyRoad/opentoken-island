@@ -6,13 +6,8 @@ const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { appendEventLog } = require("./lib/event-log");
-const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
+const { rowsFromPayload, summarizeRows, buildSummary } = require("./lib/summary");
 const { buildBattleReport } = require("./lib/island-report");
-const {
-  buildLeaderboardEndpoint,
-  LEADERBOARD_ENTRY_LIMIT,
-  LEADERBOARD_RANK_ONLY_LIMIT,
-} = require("./lib/leaderboard-endpoint");
 const {
   corsHeaders: localCorsHeaders,
   requireTrustedOrigin: requireLocalTrustedOrigin,
