@@ -793,9 +793,9 @@ ${fragment}
   async function tryRenderPosterWithNativeSnapshot(summary, options = {}) {
     const bridge = nativeSnapshotBridge(options);
     if (!bridge || typeof bridge.postMessage !== "function") return null;
+    const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
+    const html = buildSharePosterExportHtml(summary, { ...options, templateHtml });
     try {
-      const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
-      const html = buildSharePosterExportHtml(summary, { ...options, templateHtml });
       const response = await bridge.postMessage({
         type: "text/html",
         width: WIDTH,
@@ -809,7 +809,7 @@ ${fragment}
       return base64ToBlob(response.base64, response.type || PNG_TYPE, options);
     } catch (error) {
       logPosterEvent("poster.nativeSnapshot.failed", { name: error && error.name, message: error && error.message });
-      return null;
+      throw error;
     }
   }
 

@@ -291,6 +291,46 @@ function createRecordingCanvasDocument() {
   assert.doesNotMatch(snapshotMessages[0].html, /class="stage"/);
   assert.doesNotMatch(snapshotMessages[0].html, /class="fit"/);
 
+  let failedSnapshotCanvasTouched = false;
+  await assert.rejects(
+    () => poster.renderSharePosterPngBlob(sampleSummary, {
+      templateHtml,
+      document: {
+        createElement() {
+          failedSnapshotCanvasTouched = true;
+          throw new Error("native snapshot failures must not fall back to canvas");
+        },
+      },
+      nativeSnapshotBridge: {
+        postMessage() {
+          return Promise.resolve({ ok: false, error: "snapshot-timeout" });
+        },
+      },
+    }),
+    /snapshot-timeout/
+  );
+  assert.equal(failedSnapshotCanvasTouched, false);
+
+  let rejectedSnapshotCanvasTouched = false;
+  await assert.rejects(
+    () => poster.renderSharePosterPngBlob(sampleSummary, {
+      templateHtml,
+      document: {
+        createElement() {
+          rejectedSnapshotCanvasTouched = true;
+          throw new Error("native snapshot rejections must not fall back to canvas");
+        },
+      },
+      nativeSnapshotBridge: {
+        postMessage() {
+          return Promise.reject(new Error("snapshot-navigation-failed"));
+        },
+      },
+    }),
+    /snapshot-navigation-failed/
+  );
+  assert.equal(rejectedSnapshotCanvasTouched, false);
+
   let macNativeDownloaded = null;
   let macNativeClipboardCalled = false;
   const nativeMessages = [];
