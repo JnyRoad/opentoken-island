@@ -19,6 +19,7 @@ const {
   sendJson,
 } = require("./lib/http-security");
 const { createStaticFileHandler } = require("./lib/static-files");
+const { createLeaderboardRefresher } = require("./lib/leaderboard-refresh");
 const {
   applyLeaderboardForUpload,
   applyUploadUpstream,
@@ -35,16 +36,14 @@ const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
 const MAX_UPLOAD_BODY_BYTES = 5 * 1024 * 1024;
 
-const LEADERBOARD_MAX_ATTEMPTS = 4;
-const LEADERBOARD_RETRY_DELAY_MS = 900;
 const PENDING_LEADERBOARD_REFRESH_MS = 60000;
 const CONFIRMED_LEADERBOARD_REFRESH_MS = 300000;
 const EXPECTED_BINARY_PROBE_ERRORS = new Set(["ENOENT", "EACCES", "EPERM", "ENOTDIR"]);
 const serveStatic = createStaticFileHandler(ROOT);
 
 let state = loadState();
-let leaderboardRefreshPromise = null;
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
+const leaderboardRefresher = createLeaderboardRefresher({ requestText, logEvent: logIslandEvent });
 
 function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false, warn = console.warn } = {}) {
   let raw;
@@ -338,146 +337,6 @@ function safeJson(text) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function leaderboardEntries(result) {
-  return Array.isArray(result?.json?.entries) ? result.json.entries : [];
-}
-
-function confirmedMyRank(myRank, summary) {
-  const score = Number(summary?.total || 0);
-  const myRankScore = Number(myRank?.score || 0);
-  const rank = Number(myRank?.rank || 0);
-  if (
-    !Number.isFinite(score)
-    || !Number.isFinite(myRankScore)
-    || !Number.isFinite(rank)
-    || score <= 0
-    || myRankScore < score
-    || rank <= 0
-  ) {
-    return 0;
-  }
-  return rank;
-}
-
-function leaderboardWindowContainsOwn(entries, ownRank, userId, summary) {
-  const confirmedUserId = String(userId || "").trim();
-  const score = Number(summary?.total || 0);
-  return entries.some((entry) => {
-    const entryScore = Number(entry.score || 0);
-    const entryRank = Number(entry.rank || 0);
-    if (!Number.isFinite(score) || !Number.isFinite(entryScore) || score <= 0 || entryScore < score) return false;
-    if (!Number.isFinite(entryRank) || entryRank <= 0) return false;
-    const entryUserId = String(entry.userId || "").trim();
-    if (confirmedUserId && entryUserId) return entryUserId === confirmedUserId;
-    return ownRank > 0 && Number(entry.rank || 0) === ownRank;
-  });
-}
-
-async function requestLeaderboard(userId, limit) {
-  const endpoint = buildLeaderboardEndpoint(userId, { limit });
-  return requestText("GET", endpoint, "", { accept: "application/json" });
-}
-
-async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
-  let lastResult = null;
-
-  for (let attempt = 0; attempt < LEADERBOARD_MAX_ATTEMPTS; attempt += 1) {
-    const confirmedUserId = String(state.userId || "").trim();
-    let result = confirmedUserId
-      ? await requestLeaderboard(confirmedUserId, LEADERBOARD_RANK_ONLY_LIMIT)
-      : null;
-    lastResult = result;
-    let entries = [];
-    let myRank = result?.json?.myRank;
-    const ownRank = confirmedMyRank(myRank, summary);
-
-    if (!confirmedUserId || ownRank === 0 || ownRank <= LEADERBOARD_ENTRY_LIMIT) {
-      result = await requestLeaderboard(confirmedUserId, LEADERBOARD_ENTRY_LIMIT);
-      lastResult = result;
-      entries = leaderboardEntries(result);
-      const fullMyRank = result.json?.myRank;
-      const fullOwnRank = confirmedMyRank(fullMyRank, summary) || ownRank;
-      const fullWindowHasOwn = !confirmedUserId
-        || leaderboardWindowContainsOwn(entries, fullOwnRank, confirmedUserId, summary);
-      if (!entries.length || !fullWindowHasOwn) {
-        entries = [];
-        myRank = null;
-      } else {
-        myRank = fullMyRank || (ownRank > 0 ? myRank : null);
-      }
-    }
-
-    const board = computeLeaderboard(entries, summary, previousRank, state.userId, {
-      limit: LEADERBOARD_ENTRY_LIMIT,
-      myRank,
-      allowHigherMyRankScore: Boolean(confirmedUserId),
-      allowHigherUserIdScore: Boolean(confirmedUserId),
-    });
-
-    if (board) {
-      const leaderboard = { updatedAt: new Date().toISOString(), uploadId, ...board };
-      if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;
-      if (board.own.userId) state.userId = board.own.userId;
-      saveState();
-      return state.leaderboard;
-    }
-
-    if (attempt < LEADERBOARD_MAX_ATTEMPTS - 1) await sleep(LEADERBOARD_RETRY_DELAY_MS);
-  }
-
-  const leaderboard = {
-    updatedAt: new Date().toISOString(),
-    board: "total",
-    range: "today",
-    uploadId,
-    entriesCount: leaderboardEntries(lastResult).length,
-    error: lastResult?.error || "Current upload was not found in leaderboard yet",
-  };
-  if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;
-  saveState();
-  return state.leaderboard;
-}
-
-function markLeaderboardRefreshAttempt(uploadId = "") {
-  const checkedAt = new Date().toISOString();
-  const current = String(state.leaderboard?.uploadId || "") === String(uploadId || "")
-    ? state.leaderboard || {}
-    : {};
-  const leaderboard = {
-    ...current,
-    uploadId,
-    board: current.board || "total",
-    range: current.range || "today",
-    lastRefreshAttemptAt: checkedAt,
-  };
-  if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return false;
-  saveState();
-  return true;
-}
-
-function previousRankForUpload(uploadId = "") {
-  if (String(state.leaderboard?.uploadId || "") !== String(uploadId || "")) return null;
-  const rank = Number(state.leaderboard?.own?.rank || 0);
-  return Number.isFinite(rank) && rank > 0 ? rank : null;
-}
-
-function scheduleLeaderboardRefresh(upload) {
-  if (leaderboardRefreshPromise) return;
-  const uploadId = upload.uploadId || "";
-  const previousRank = previousRankForUpload(uploadId);
-  if (!markLeaderboardRefreshAttempt(uploadId)) return;
-  leaderboardRefreshPromise = refreshLeaderboard(upload.summary, previousRank, uploadId)
-    .catch((error) => {
-      logIslandEvent("leaderboard auto refresh failed", { error: error.message });
-    })
-    .finally(() => {
-      leaderboardRefreshPromise = null;
-    });
-}
 
 function accountStatus() {
   const proxy = ensureProxyConfig();
@@ -511,7 +370,7 @@ async function handleUploadProxy(req, res, url) {
   const body = bodyBuffer.toString("utf8");
   const payload = safeJson(body);
   const summary = summarizeRows(rowsFromPayload(payload));
-  const previousRank = previousRankForUpload(state.lastUpload?.uploadId || "");
+  const previousRank = leaderboardRefresher.previousRankFor(state, state.lastUpload?.uploadId || "");
   const uploadId = crypto.randomUUID();
 
   const uploadRecord = {
@@ -556,7 +415,7 @@ async function handleUploadProxy(req, res, url) {
   });
 
   if (upstream.ok && summary.total > 0 && isCurrentUpload(state, uploadId)) {
-    const leaderboard = await refreshLeaderboard(summary, previousRank, uploadId);
+    const leaderboard = await leaderboardRefresher.refresh(state, saveState, summary, previousRank, uploadId);
     logIslandEvent("refreshed leaderboard", {
       rank: leaderboard?.own?.rank ?? null,
       estimated: Boolean(leaderboard?.estimated || leaderboard?.own?.estimated),
@@ -628,10 +487,10 @@ async function handleApi(req, res, url) {
       const upload = state.lastUpload;
       if (forceRefresh) {
         logIslandEvent("summary refresh started", { flow: "api.summary.refresh", uploadId: upload.uploadId || "" });
-        await refreshLeaderboard(upload.summary, previousRankForUpload(upload.uploadId || ""), upload.uploadId || "");
+        await leaderboardRefresher.refresh(state, saveState, upload.summary, leaderboardRefresher.previousRankFor(state, upload.uploadId || ""), upload.uploadId || "");
       } else {
         logIslandEvent("summary auto refresh scheduled", { flow: "api.summary.autoRefresh", uploadId: upload.uploadId || "" });
-        scheduleLeaderboardRefresh(upload);
+        leaderboardRefresher.schedule(state, saveState, upload);
       }
     }
     return json(req, res, 200, {
