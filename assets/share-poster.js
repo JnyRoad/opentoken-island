@@ -1,10 +1,10 @@
 (function attachSharePoster(root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.OpenTokenSharePoster = api;
-})(typeof globalThis !== "undefined" ? globalThis : window, function createSharePosterApi() {
+})(typeof globalThis !== "undefined" ? globalThis : window, function createSharePosterApi(root) {
   const WIDTH = 1080;
   const HEIGHT = 1920;
   const TEMPLATE_URL = "./assets/share-poster-template.html";
@@ -68,6 +68,12 @@
   }
 
   const DEFAULT_TEMPLATE_HTML = readBundledTemplate();
+
+  function logPosterEvent(event, details = {}) {
+    if (root && typeof root.OpenTokenIslandLogEvent === "function") {
+      root.OpenTokenIslandLogEvent(event, details);
+    }
+  }
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -300,28 +306,40 @@
   }
 
   async function downloadSharePoster(summary, options = {}) {
-    const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
-    const svg = buildSharePosterSvg(summary, { ...options, templateHtml });
-    const blob = options.renderSvg ? await options.renderSvg(svg) : await svgToPngBlob(svg);
-    const fileName = options.fileName || "opentoken-token-identity.png";
-    const shareTarget = options.shareTarget || (typeof navigator === "object" ? navigator : null);
-    const FileCtor = options.FileCtor || (typeof File === "function" ? File : null);
+    logPosterEvent("poster.download.start", {
+      total: summary?.total || 0,
+      rank: fieldValue(summary, options, "rank") || null,
+      rankEstimated: Boolean(fieldValue(summary, options, "rankEstimated")),
+    });
+    try {
+      const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
+      const svg = buildSharePosterSvg(summary, { ...options, templateHtml });
+      const blob = options.renderSvg ? await options.renderSvg(svg) : await svgToPngBlob(svg);
+      const fileName = options.fileName || "opentoken-token-identity.png";
+      const shareTarget = options.shareTarget || (typeof navigator === "object" ? navigator : null);
+      const FileCtor = options.FileCtor || (typeof File === "function" ? File : null);
 
-    if (FileCtor && shareTarget?.canShare && shareTarget?.share) {
-      const file = new FileCtor([blob], fileName, { type: PNG_TYPE });
-      if (shareTarget.canShare({ files: [file] })) {
-        await shareTarget.share({
-          files: [file],
-          title: "AI Token Identity",
-          text: "我的 AI 修为快照",
-        });
-        return { action: "shared", fileName };
+      if (FileCtor && shareTarget?.canShare && shareTarget?.share) {
+        const file = new FileCtor([blob], fileName, { type: PNG_TYPE });
+        if (shareTarget.canShare({ files: [file] })) {
+          await shareTarget.share({
+            files: [file],
+            title: "AI Token Identity",
+            text: "我的 AI 修为快照",
+          });
+          logPosterEvent("poster.download.complete", { action: "shared", fileName });
+          return { action: "shared", fileName };
+        }
       }
-    }
 
-    const downloader = options.downloader || downloadBlob;
-    downloader(blob, fileName);
-    return { action: "download-started", fileName };
+      const downloader = options.downloader || downloadBlob;
+      downloader(blob, fileName);
+      logPosterEvent("poster.download.complete", { action: "download-started", fileName });
+      return { action: "download-started", fileName };
+    } catch (error) {
+      logPosterEvent("poster.download.failed", { name: error && error.name, message: error && error.message });
+      throw error;
+    }
   }
 
   return {

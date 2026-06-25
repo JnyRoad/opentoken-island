@@ -7,14 +7,15 @@ mod windows_support;
 
 use std::{
     env,
-    io::{Error as IoError, ErrorKind},
+    fs::OpenOptions,
+    io::{Error as IoError, ErrorKind, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use tauri::{
@@ -52,6 +53,41 @@ impl PanelState {
             epoch: AtomicU64::new(0),
             pinned: AtomicBool::new(false),
         }
+    }
+}
+
+fn escape_json(value: &str) -> String {
+    let mut escaped = String::new();
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+fn log_desktop_event(event: &str) {
+    let directory = user_home().join(".opentoken");
+    let _ = std::fs::create_dir_all(&directory);
+    let log_path = directory.join("island-events.log");
+    let at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(
+            file,
+            "{{\"atMs\":{},\"layer\":\"tauri\",\"event\":\"{}\",\"flow\":\"{}\",\"details\":{{}}}}",
+            at_ms,
+            escape_json(event),
+            escape_json(event)
+        );
     }
 }
 
@@ -123,28 +159,39 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("OpenToken Island - hover for today's quota")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open-panel" => {
+                log_desktop_event("tauri.menu.openPanel.click");
                 let _ = show_panel(app);
             }
             "show-island" => {
+                log_desktop_event("tauri.menu.showIsland.click");
                 let _ = show_island(app);
             }
             "open-browser" => {
+                log_desktop_event("tauri.menu.openBrowser.click");
                 let _ = open_external(&local_url("popover.html"));
             }
             "open-logs" => {
+                log_desktop_event("tauri.menu.openLogs.click");
                 let _ = open_logs_file();
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                log_desktop_event("tauri.menu.quit.click");
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             let app = tray.app_handle();
             match event {
-                TrayIconEvent::Enter { position, rect, .. }
-                | TrayIconEvent::Move { position, rect, .. } => {
+                TrayIconEvent::Enter { position, rect, .. } => {
+                    log_desktop_event("tauri.tray.hoverEnter");
+                    let _ = show_hover_panel(&app, position, rect);
+                }
+                TrayIconEvent::Move { position, rect, .. } => {
                     let _ = show_hover_panel(&app, position, rect);
                 }
                 TrayIconEvent::Leave { .. } => {
+                    log_desktop_event("tauri.tray.leave");
                     schedule_hide_panel(&app, Duration::from_millis(250));
                 }
                 TrayIconEvent::Click {
@@ -154,6 +201,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     button_state: MouseButtonState::Up,
                     ..
                 } => {
+                    log_desktop_event("tauri.tray.leftClick");
                     let _ = hide_island(&app);
                     let _ = pin_panel(&app, position, rect);
                 }
@@ -171,9 +219,11 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
     if is_island_server_ready(DEFAULT_PORT) {
+        log_desktop_event("tauri.server.alreadyReady");
         return Ok(());
     }
     if is_port_open(DEFAULT_PORT) {
+        log_desktop_event("tauri.server.portInUse");
         return Err(tauri::Error::Io(IoError::new(
             ErrorKind::AddrInUse,
             format!("port {DEFAULT_PORT} is already used by another local service"),
@@ -181,6 +231,7 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let server = resolve_server_path(app);
+    log_desktop_event("tauri.server.start");
     let home = user_home();
     let opentoken = opentoken_bin(&home);
     let mut command = Command::new("node");
@@ -197,6 +248,7 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let child = command.spawn().map_err(|error| {
+        log_desktop_event("tauri.server.startFailed");
         tauri::Error::Io(std::io::Error::new(
             error.kind(),
             format!(
@@ -213,6 +265,7 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
     }
 
     wait_for_server(DEFAULT_PORT, Duration::from_secs(3))?;
+    log_desktop_event("tauri.server.ready");
     Ok(())
 }
 
@@ -245,6 +298,7 @@ fn show_panel(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn pin_panel(app: &AppHandle, cursor: PhysicalPosition<f64>, rect: Rect) -> tauri::Result<()> {
+    log_desktop_event("tauri.panel.pin");
     set_panel_pinned(app, true);
     bump_panel_epoch(app);
     let window = ensure_panel_window(app)?;
@@ -311,6 +365,7 @@ fn show_hover_panel(
 }
 
 fn show_island(app: &AppHandle) -> tauri::Result<()> {
+    log_desktop_event("tauri.island.show");
     let cursor = app
         .cursor_position()
         .unwrap_or_else(|_| PhysicalPosition::new(0.0, 0.0));
@@ -434,6 +489,7 @@ fn schedule_hide_panel_at_epoch(app: &AppHandle, delay: Duration, epoch: u64) {
 
 fn hide_panel(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(PANEL_LABEL) {
+        log_desktop_event("tauri.panel.hide");
         window.hide()?;
     }
     Ok(())
@@ -461,6 +517,7 @@ fn schedule_hide_island(app: &AppHandle, delay: Duration) {
 
 fn hide_island(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(ISLAND_LABEL) {
+        log_desktop_event("tauri.island.hide");
         window.hide()?;
     }
     Ok(())

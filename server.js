@@ -5,6 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
+const { appendEventLog } = require("./lib/event-log");
 const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
 const { buildBattleReport } = require("./lib/island-report");
 const { buildLeaderboardEndpoint, LEADERBOARD_ENTRY_LIMIT } = require("./lib/leaderboard-endpoint");
@@ -90,14 +91,12 @@ function saveState() {
 }
 
 function logIslandEvent(message, details = {}) {
-  fs.mkdirSync(path.dirname(EVENT_LOG_PATH), { recursive: true });
-  const line = JSON.stringify({
-    at: new Date().toISOString(),
+  appendEventLog(EVENT_LOG_PATH, {
     layer: "server",
-    message,
-    ...details,
+    event: message,
+    flow: details.flow || "",
+    details,
   });
-  fs.appendFileSync(EVENT_LOG_PATH, `${line}\n`);
 }
 
 function queueIslandEvent(reason = "manual", { showIsland = true } = {}) {
@@ -120,6 +119,23 @@ function currentIslandEvent() {
 
 function redactUploadPath(pathname = "") {
   return String(pathname).replace(/(\/tokenrank\/api\/subapp\/u\/)[^/?#]+/, "$1<account>");
+}
+
+function logHttpRequest(req, url) {
+  if (
+    url.pathname === "/api/logs/event"
+    || url.pathname === "/api/island-event"
+    || url.pathname === "/api/health"
+    || (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/tokenrank/api/subapp/u/"))
+  ) {
+    return;
+  }
+  logIslandEvent("http request received", {
+    flow: "http.request",
+    method: req.method,
+    path: redactUploadPath(url.pathname),
+    query: url.pathname === "/api/summary" ? { refresh: url.searchParams.get("refresh") === "1" } : {},
+  });
 }
 
 function readConfig() {
@@ -520,6 +536,7 @@ async function handleApi(req, res, url) {
     if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
     if (!requireApiToken(req, res)) return;
     const reason = url.searchParams.get("reason") || "manual-debug";
+    logIslandEvent("debug island requested", { flow: "api.debug.island", reason });
     const event = queueIslandEvent(reason);
     return json(req, res, 200, {
       ok: true,
@@ -531,6 +548,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/summary") {
     const forceRefresh = url.searchParams.get("refresh") === "1";
     if (forceRefresh && !requireApiToken(req, res)) return;
+    logIslandEvent("summary requested", { flow: "api.summary", forceRefresh });
     const autoRefresh = shouldRefreshLeaderboard(state, {
       pendingRefreshMs: PENDING_LEADERBOARD_REFRESH_MS,
       confirmedRefreshMs: CONFIRMED_LEADERBOARD_REFRESH_MS,
@@ -538,8 +556,10 @@ async function handleApi(req, res, url) {
     if ((forceRefresh || autoRefresh) && state.lastUpload?.summary) {
       const upload = state.lastUpload;
       if (forceRefresh) {
+        logIslandEvent("summary refresh started", { flow: "api.summary.refresh", uploadId: upload.uploadId || "" });
         await refreshLeaderboard(upload.summary, previousRankForUpload(upload.uploadId || ""), upload.uploadId || "");
       } else {
+        logIslandEvent("summary auto refresh scheduled", { flow: "api.summary.autoRefresh", uploadId: upload.uploadId || "" });
         scheduleLeaderboardRefresh(upload);
       }
     }
@@ -554,7 +574,14 @@ async function handleApi(req, res, url) {
     if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
     if (!requireApiToken(req, res)) return;
     ensureProxyConfig();
+    logIslandEvent("opentoken upload command started", { flow: "api.upload" });
     const result = await run(OPENTOKEN, ["upload"], 120000);
+    logIslandEvent("opentoken upload command completed", {
+      flow: "api.upload",
+      ok: result.ok,
+      code: result.code,
+      outputLength: (result.stdout || result.stderr || result.message || "").length,
+    });
     return json(req, res, result.ok ? 200 : 500, {
       ok: result.ok,
       output: (result.stdout || result.stderr || result.message).trim(),
@@ -567,8 +594,31 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/logs/open") {
     if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
     if (!requireApiToken(req, res)) return;
+    logIslandEvent("logs open requested", { flow: "api.logs.open" });
     const result = await openPath(EVENT_LOG_PATH);
     return json(req, res, result.ok ? 200 : 500, result);
+  }
+
+  if (url.pathname === "/api/logs/event") {
+    if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
+    if (!requireApiToken(req, res)) return;
+    let payload = null;
+    try {
+      payload = safeJson((await readBody(req, 64 * 1024)).toString("utf8"));
+    } catch (error) {
+      logIslandEvent("client event log rejected", { flow: "api.logs.event", error: error.message });
+      return json(req, res, error.statusCode || 400, { ok: false, error: "Could not read client event" });
+    }
+    if (!payload || typeof payload !== "object" || typeof payload.event !== "string") {
+      logIslandEvent("client event log rejected", { flow: "api.logs.event", reason: "invalid-payload" });
+      return json(req, res, 400, { ok: false, error: "Invalid client event" });
+    }
+    logIslandEvent(payload.event.slice(0, 120), {
+      flow: String(payload.flow || "client.event").slice(0, 120),
+      clientLayer: String(payload.layer || "client").slice(0, 80),
+      ...(payload.details && typeof payload.details === "object" ? payload.details : {}),
+    });
+    return json(req, res, 200, { ok: true });
   }
 
   if (url.pathname === "/api/service") {
@@ -593,11 +643,32 @@ async function serviceStatus() {
 }
 
 function json(req, res, status, body) {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+    if (
+      url.pathname.startsWith("/api/")
+      && url.pathname !== "/api/logs/event"
+      && url.pathname !== "/api/island-event"
+      && url.pathname !== "/api/health"
+    ) {
+      logIslandEvent("api response sent", {
+        flow: "api.response",
+        method: req.method,
+        path: url.pathname,
+        status,
+        ok: body?.ok !== false && status < 500,
+        error: body?.ok === false ? body.error || "request failed" : "",
+      });
+    }
+  } catch (error) {
+    logIslandEvent("api response log failed", { flow: "api.response", error: error.message });
+  }
   sendJson(req, res, PORT, status, body);
 }
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  logHttpRequest(req, url);
 
   if (req.method === "OPTIONS") {
     if (!requireTrustedOrigin(req, res)) return;

@@ -258,6 +258,66 @@ test("state-changing API commands require the local client token", async (t) => 
   assert.equal(fs.readFileSync(marker, "utf8"), "ran");
 });
 
+test("client event logs require token and redact sensitive fields", async (t) => {
+  const home = tempDir("home");
+  const { port } = await startIslandServer(t, { home });
+
+  const denied = await request(port, {
+    path: "/api/logs/event",
+    method: "POST",
+    body: JSON.stringify({ event: "popover.upload.click" }),
+    headers: { "content-type": "application/json" },
+  });
+  assert.equal(denied.status, 403);
+
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+  const allowed = await request(port, {
+    path: "/api/logs/event",
+    method: "POST",
+    body: JSON.stringify({
+      layer: "popover",
+      event: "popover.upload.click",
+      flow: "popover.upload.click",
+      details: {
+        token: "secret-token",
+        path: "/tokenrank/api/subapp/u/account-1234567890?debug=1",
+        payload: { rows: [{ input: 10 }] },
+      },
+    }),
+    headers: {
+      "content-type": "application/json",
+      "x-opentoken-island-token": apiToken,
+    },
+  });
+  assert.equal(allowed.status, 200);
+
+  const logPath = path.join(home, ".opentoken", "island-events.log");
+  await waitUntil(() => fs.existsSync(logPath));
+  const entries = fs.readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const clientEntry = entries.find((entry) => entry.event === "popover.upload.click");
+
+  assert.ok(clientEntry);
+  assert.equal(clientEntry.details.token, "<redacted>");
+  assert.equal(clientEntry.details.path, "/tokenrank/api/subapp/u/<account>?debug=1");
+  assert.equal(clientEntry.details.payload, "<omitted>");
+});
+
+test("broken event log file does not break local API responses", async (t) => {
+  const home = tempDir("home");
+  const { port } = await startIslandServer(t, { home });
+  const logPath = path.join(home, ".opentoken", "island-events.log");
+  fs.rmSync(logPath, { force: true, recursive: true });
+  fs.mkdirSync(logPath, { recursive: true });
+
+  const response = await request(port, { path: "/api/client-config" });
+  assert.equal(response.status, 200);
+  assert.match(JSON.parse(response.body).apiToken, /^[a-f0-9-]{16,}$/i);
+});
+
 test("manual summary refresh requires the local client token before the first upload", async (t) => {
   const home = tempDir("home");
   const { port } = await startIslandServer(t, { home });

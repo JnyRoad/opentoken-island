@@ -18,7 +18,7 @@ test("native shell logs node server launch failures instead of swallowing them",
 
   assert.match(startServer, /do\s*\{\s*try process\.run\(\)/);
   assert.match(startServer, /catch\s*\{/);
-  assert.match(startServer, /logIsland\("server launch failed error=\\\(error\.localizedDescription\)"\)/);
+  assert.match(startServer, /logIsland\("server\.launch\.failed", details: \["error": error\.localizedDescription\]\)/);
   assert.doesNotMatch(startServer, /try\? process\.run\(\)/);
 });
 

@@ -17,11 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var didLoadInitialSnapshot = false
     private var didLoadIslandEventSnapshot = false
     private var isTerminating = false
+    private var lastEventPollFailureLogAt = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSApp.applicationIconImage = symbolImage(size: 256)
-        logIsland("app launched")
+        logIsland("app.launched")
         startServer()
         setupStatusItem()
         setupPopover()
@@ -39,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
-        logIsland("app terminating")
+        logIsland("app.terminating")
         timer?.invalidate()
         eventTimer?.invalidate()
         serverProcess?.terminate()
@@ -87,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     private func showIsland(reason: String = "manual") {
-        logIsland("showIsland requested reason=\(reason)")
+        logIsland("island.show.requested", details: ["reason": reason])
         let width: CGFloat = 576
         let height: CGFloat = 134
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -118,12 +119,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.contentView = webView
         panel.orderFrontRegardless()
         islandWindow = panel
-        logIsland("showIsland displayed reason=\(reason)")
+        logIsland("island.show.displayed", details: ["reason": reason])
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak panel] in
             panel?.orderOut(nil)
             if self?.islandWindow === panel { self?.islandWindow = nil }
-            self?.logIsland("showIsland dismissed reason=\(reason)")
+            self?.logIsland("island.show.dismissed", details: ["reason": reason])
         }
     }
 
@@ -150,7 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         process.terminationHandler = { [weak self] process in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.logIsland("server exited status=\(process.terminationStatus) reason=\(process.terminationReason.rawValue)")
+                self.logIsland("server.exited", details: [
+                    "status": process.terminationStatus,
+                    "reason": process.terminationReason.rawValue
+                ])
                 if self.serverProcess === process { self.serverProcess = nil }
                 self.scheduleServerRestart(reason: "server-exit")
             }
@@ -158,19 +162,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         do {
             try process.run()
             serverProcess = process
-            logIsland("server launched pid=\(process.processIdentifier)")
+            logIsland("server.launched", details: ["pid": process.processIdentifier])
         } catch {
-            logIsland("server launch failed error=\(error.localizedDescription)")
+            logIsland("server.launch.failed", details: ["error": error.localizedDescription])
             scheduleServerRestart(reason: "launch-failed")
         }
     }
 
     private func scheduleServerRestart(reason: String) {
         guard !isTerminating else { return }
-        logIsland("server restart scheduled reason=\(reason)")
+        logIsland("server.restart.scheduled", details: ["reason": reason])
         DispatchQueue.main.asyncAfter(deadline: .now() + serverRestartDelay) { [weak self] in
             guard let self, !self.isTerminating, self.serverProcess == nil else { return }
-            self.logIsland("server restart starting reason=\(reason)")
+            self.logIsland("server.restart.starting", details: ["reason": reason])
             self.startServer()
         }
     }
@@ -235,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
+        logIsland("button.togglePopover.clicked", details: ["shown": popover.isShown])
         if popover.isShown {
             popover.performClose(nil)
         } else {
@@ -245,21 +250,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     @objc private func refreshNow() {
+        logIsland("menu.refresh.clicked")
         updateStatusTitle()
         refreshPopoverContent()
         showIsland(reason: "refresh-menu")
     }
 
     @objc private func showIslandNow() {
+        logIsland("menu.showIsland.clicked")
         showIsland(reason: "manual-menu")
     }
 
     @objc private func quit() {
+        logIsland("menu.quit.clicked")
         NSApp.terminate(nil)
     }
 
     @objc private func showContextMenu(_ recognizer: NSClickGestureRecognizer) {
         guard let button = statusItem.button else { return }
+        logIsland("button.contextMenu.clicked")
         statusItem.menu = contextMenu
         button.performClick(nil)
         statusItem.menu = nil
@@ -267,15 +276,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     private func refreshPopoverContent() {
         guard popover.isShown else { return }
+        logIsland("popover.refresh.requested")
         popoverWebView?.evaluateJavaScript("window.OpenTokenIslandRefresh && window.OpenTokenIslandRefresh()")
     }
 
     private func updateStatusTitle() {
         guard let url = URL(string: "http://127.0.0.1:\(port)/api/summary") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let total = json["totalLabel"] as? String else { return }
+            guard let data else {
+                self?.logIsland("status.update.failed", details: ["error": "no-data"])
+                return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let total = json["totalLabel"] as? String else {
+                self?.logIsland("status.update.failed", details: ["error": "invalid-json"])
+                return
+            }
             let waiting = json["waiting"] as? Bool ?? false
             let rank = json["rank"] as? Int
             let unlockedBadges = self?.currentUnlockedBadges(from: json) ?? []
@@ -288,6 +304,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 } else {
                     self.statusItem.button?.title = " \(total)"
                 }
+                self.logIsland("status.updated", details: [
+                    "waiting": waiting,
+                    "rank": rank ?? 0
+                ])
                 if self.shouldShowIsland(waiting: waiting, unlockedBadges: unlockedBadges) {
                     self.showIsland(reason: "badge-unlocked")
                 }
@@ -299,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard let url = URL(string: "http://127.0.0.1:\(port)/api/island-event") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
             if let error {
-                self?.logIsland("event poll failed error=\(error.localizedDescription)")
+                self?.logEventPollFailure(error.localizedDescription)
                 return
             }
             guard let data,
@@ -315,13 +335,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 if !self.didLoadIslandEventSnapshot {
                     self.lastIslandEventId = id
                     self.didLoadIslandEventSnapshot = true
-                    self.logIsland("event baseline id=\(id) reason=\(reason)")
+                    self.logIsland("event.baseline", details: ["id": id, "reason": reason])
                     return
                 }
 
                 guard id > self.lastIslandEventId else { return }
                 self.lastIslandEventId = id
-                self.logIsland("event detected id=\(id) reason=\(reason)")
+                self.logIsland("event.detected", details: ["id": id, "reason": reason])
                 self.updateStatusTitle()
                 self.refreshPopoverContent()
                 if showIsland {
@@ -352,20 +372,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return !unlockedBadges.subtracting(unlockedBadgeTitles).isEmpty
     }
 
-    private func logIsland(_ message: String) {
+    private func logEventPollFailure(_ message: String) {
+        let now = Date()
+        guard now.timeIntervalSince(lastEventPollFailureLogAt) >= 60 else { return }
+        lastEventPollFailureLogAt = now
+        logIsland("event.poll.failed", details: ["error": message])
+    }
+
+    private func sanitizeLogString(_ value: String) -> String {
+        var text = value.replacingOccurrences(
+            of: "(/tokenrank/api/subapp/u/)[^/?#]+",
+            with: "$1<account>",
+            options: .regularExpression
+        )
+        let secretPattern = "(bearer\\s+[a-z0-9._~+/=-]+|authorization\\s*[:=]|(?:api[_-]?token|auth[_-]?token|token|secret[_-]?token)\\s*[:=]|x-opentoken-island-token)"
+        if text.range(of: secretPattern, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "<redacted>"
+        }
+        if text.count > 1000 {
+            text = String(text.prefix(1000)) + "...<truncated>"
+        }
+        return text
+    }
+
+    private func sanitizeLogValue(_ value: Any) -> Any {
+        if let string = value as? String { return sanitizeLogString(string) }
+        if let bool = value as? Bool { return bool }
+        if let number = value as? NSNumber { return number }
+        if let dictionary = value as? [String: Any] { return sanitizeLogDetails(dictionary) }
+        if let array = value as? [Any] {
+            return array.prefix(20).map { sanitizeLogValue($0) }
+        }
+        return sanitizeLogString(String(describing: value))
+    }
+
+    private func sanitizeLogDetails(_ details: [String: Any]) -> [String: Any] {
+        var sanitized: [String: Any] = [:]
+        for (key, value) in details {
+            let lowerKey = key.lowercased()
+            if lowerKey.contains("authorization")
+                || lowerKey.contains("cookie")
+                || lowerKey.contains("password")
+                || lowerKey.contains("secret")
+                || lowerKey.contains("token") {
+                sanitized[key] = "<redacted>"
+            } else if ["body", "payload", "raw", "stdout", "stderr"].contains(lowerKey) {
+                sanitized[key] = "<omitted>"
+            } else {
+                sanitized[key] = sanitizeLogValue(value)
+            }
+        }
+        return sanitized
+    }
+
+    private func logIsland(_ event: String, details: [String: Any] = [:]) {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".opentoken")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("island-events.log")
-        let line = "\(ISO8601DateFormatter().string(from: Date())) layer=app \(message)\n"
-        guard let data = line.data(using: .utf8) else { return }
+        let safeEvent = sanitizeLogString(event)
+        let entry: [String: Any] = [
+            "at": ISO8601DateFormatter().string(from: Date()),
+            "layer": "app",
+            "event": safeEvent,
+            "flow": safeEvent,
+            "details": sanitizeLogDetails(details)
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: entry),
+              var line = String(data: data, encoding: .utf8) else { return }
+        line.append("\n")
+        guard let lineData = line.data(using: .utf8) else { return }
 
         if FileManager.default.fileExists(atPath: file.path),
            let handle = try? FileHandle(forWritingTo: file) {
             handle.seekToEndOfFile()
-            handle.write(data)
+            handle.write(lineData)
             handle.closeFile()
         } else {
-            try? data.write(to: file)
+            try? lineData.write(to: file)
         }
     }
 }

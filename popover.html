@@ -23,6 +23,8 @@ let apiToken = '';
 const $ = (selector) => document.querySelector(selector);
 let latestSummary = null;
 let lastIslandEventId = null;
+let lastIslandEventPollLogAt = 0;
+let lastIslandEventFailureLogAt = 0;
 
 function icons() {
   if (window.lucide) lucide.createIcons();
@@ -32,6 +34,7 @@ async function loadClientConfig() {
   const response = await fetch(API + '/client-config');
   const data = await response.json();
   apiToken = data.apiToken || '';
+  void logClientEvent('popover.clientConfig.loaded', { hasToken: Boolean(apiToken) });
 }
 
 function tokenHeaders(extra = {}) {
@@ -39,6 +42,28 @@ function tokenHeaders(extra = {}) {
     ? { ...extra, 'x-opentoken-island-token': apiToken }
     : extra;
 }
+
+function logClientEvent(event, details = {}) {
+  if (!apiToken) return Promise.resolve(false);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), 1500) : null;
+  return fetch(API + '/logs/event', {
+    method: 'POST',
+    headers: tokenHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      layer: 'popover',
+      event,
+      flow: event,
+      details
+    }),
+    keepalive: true,
+    signal: controller && controller.signal
+  }).then(() => true).catch(() => false).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+window.OpenTokenIslandLogEvent = logClientEvent;
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -131,6 +156,11 @@ async function sharePoster() {
   const shareLabel = $('#shareLabel');
   const summary = latestSummary && latestSummary.ok ? latestSummary : { total: 0, totalLabel: '0' };
   let resetLabel = true;
+  void logClientEvent('popover.share.click', {
+    hasSummary: Boolean(latestSummary && latestSummary.ok),
+    rank: summary.rank || null,
+    total: summary.total || 0
+  });
   shareButton.disabled = true;
   shareButton.style.opacity = '0.72';
   shareButton.title = '';
@@ -151,11 +181,13 @@ async function sharePoster() {
     shareButton.title = result.action === 'shared'
       ? 'Shared with the system share sheet'
       : 'Download was triggered. Check your browser or WebView downloads.';
+    void logClientEvent('popover.share.complete', { action: result.action, fileName: result.fileName });
   } catch (error) {
     console.error(error);
     shareLabel.textContent = posterErrorLabel(error);
     shareButton.title = error && error.message ? error.message : 'Poster generation failed';
     resetLabel = error && error.name === 'AbortError';
+    void logClientEvent('popover.share.failed', { name: error && error.name, message: error && error.message });
   } finally {
     const resetButton = () => {
       shareButton.disabled = false;
@@ -171,15 +203,24 @@ async function sharePoster() {
 }
 
 async function load(refresh = false) {
+  void logClientEvent('popover.summary.load', { refresh });
   try {
     const response = await fetch(API + (refresh ? '/summary?refresh=1' : '/summary'), {
       headers: refresh ? tokenHeaders() : {}
     });
     const data = await response.json();
     render(data);
+    void logClientEvent('popover.summary.loaded', {
+      refresh,
+      status: response.status,
+      ok: Boolean(data && data.ok),
+      waiting: Boolean(data && data.waiting),
+      rank: data && data.rank || null
+    });
     return data;
   } catch (error) {
     $('#serviceText').textContent = 'Live API unavailable';
+    void logClientEvent('popover.summary.failed', { refresh, message: error && error.message });
     return null;
   }
 }
@@ -189,12 +230,17 @@ function delay(ms) {
 }
 
 async function waitForFreshSummary(previousCapturedAt) {
+  void logClientEvent('popover.summary.waitFresh.start', { hasPreviousCapture: Boolean(previousCapturedAt) });
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     const data = await load();
-    if (!previousCapturedAt || (data && data.capturedAt && data.capturedAt !== previousCapturedAt)) return data;
+    if (!previousCapturedAt || (data && data.capturedAt && data.capturedAt !== previousCapturedAt)) {
+      void logClientEvent('popover.summary.waitFresh.complete', { capturedAt: data && data.capturedAt || '' });
+      return data;
+    }
     await delay(500);
   }
+  void logClientEvent('popover.summary.waitFresh.timeout', { previousCapturedAt });
   return latestSummary;
 }
 
@@ -203,31 +249,53 @@ async function pollIslandEvent() {
     const response = await fetch(API + '/island-event');
     const data = await response.json();
     const id = Number(data && data.event && data.event.id || 0);
+    const now = Date.now();
+    const shouldLogPoll = lastIslandEventId === null || id > lastIslandEventId || now - lastIslandEventPollLogAt > 60000;
+    if (shouldLogPoll) {
+      lastIslandEventPollLogAt = now;
+      void logClientEvent('popover.islandEvent.poll', { status: response.status, id });
+    }
     if (lastIslandEventId === null) {
       lastIslandEventId = id;
       return;
     }
     if (id > lastIslandEventId) {
       lastIslandEventId = id;
+      void logClientEvent('popover.islandEvent.detected', { id });
       await load();
     }
-  } catch {}
+  } catch (error) {
+    const now = Date.now();
+    if (now - lastIslandEventFailureLogAt > 60000) {
+      lastIslandEventFailureLogAt = now;
+      void logClientEvent('popover.islandEvent.failed', { message: error && error.message });
+    }
+  }
 }
 
 window.OpenTokenIslandRefresh = () => load();
 
 $('#uploadButton').onclick = async () => {
   setLoad(true);
+  void logClientEvent('popover.upload.click', { capturedAt: latestSummary && latestSummary.capturedAt || '' });
   try {
     const previousCapturedAt = latestSummary && latestSummary.capturedAt || '';
     const response = await fetch(API + '/upload', { method: 'POST', headers: tokenHeaders() });
     const result = await response.json().catch(() => null);
+    void logClientEvent('popover.upload.complete', {
+      status: response.status,
+      ok: Boolean(result && result.ok),
+      hasSummary: Boolean(result && result.summary)
+    });
     if (result && result.summary) render({ ...result.summary, account: result.account, service: result.service });
     if (!response.ok || !result || result.ok === false) {
       $('#serviceText').textContent = 'Upload failed; check logs';
       return;
     }
     await waitForFreshSummary(previousCapturedAt);
+  } catch (error) {
+    $('#serviceText').textContent = 'Upload API unavailable';
+    void logClientEvent('popover.upload.failed', { message: error && error.message });
   } finally {
     setLoad(false);
   }
@@ -237,18 +305,25 @@ $('#shareButton').onclick = sharePoster;
 
 $('#refreshButton').onclick = async () => {
   setLoad(true);
+  void logClientEvent('popover.refresh.click');
   try {
     await load(true);
+    void logClientEvent('popover.refresh.complete');
+  } catch (error) {
+    void logClientEvent('popover.refresh.failed', { message: error && error.message });
   } finally {
     setLoad(false);
   }
 };
 
 $('#openLogsButton').onclick = async () => {
+  void logClientEvent('popover.openLogs.click');
   try {
-    await fetch(API + '/logs/open', { method: 'POST', headers: tokenHeaders() });
+    const response = await fetch(API + '/logs/open', { method: 'POST', headers: tokenHeaders() });
+    void logClientEvent('popover.openLogs.complete', { status: response.status });
   } catch (error) {
     $('#serviceText').textContent = 'Could not open logs';
+    void logClientEvent('popover.openLogs.failed', { message: error && error.message });
   }
 };
 
@@ -257,6 +332,7 @@ async function init() {
     await loadClientConfig();
   } catch (error) {
     $('#serviceText').textContent = 'Local client token unavailable';
+    void logClientEvent('popover.clientConfig.failed', { message: error && error.message });
   }
   await load();
 }
