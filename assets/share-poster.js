@@ -260,13 +260,45 @@
 </svg>`;
   }
 
+  function buildSharePosterExportHtml(summary, options = {}) {
+    const html = buildSharePosterHtml(summary, options);
+    const style = extractTemplateStyle(html);
+    const fragment = extractBetween(html, "<!-- SHARE_POSTER_FRAGMENT_START -->", "<!-- SHARE_POSTER_FRAGMENT_END -->");
+    return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=${WIDTH}, initial-scale=1">
+  <title>OpenToken Island · AI Token 身份战报</title>
+  <style>
+${style}
+html, body {
+  width: ${WIDTH}px;
+  height: ${HEIGHT}px;
+  min-height: ${HEIGHT}px;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+body {
+  display: block;
+  padding: 0;
+}
+  </style>
+</head>
+<body>
+${fragment}
+</body>
+</html>`;
+  }
+
   async function loadPosterTemplateHtml(templateUrl = TEMPLATE_URL) {
     const response = await fetch(templateUrl, { cache: "force-cache" });
     if (!response.ok) throw new Error(`Failed to load poster template: ${response.status}`);
     return response.text();
   }
 
-  function blobToDataUrl(blob) {
+  function logoBlobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -278,7 +310,7 @@
   async function loadLogoDataUrl(logoUrl = "./assets/scys/icon_topnav.png") {
     const response = await fetch(logoUrl, { cache: "force-cache" });
     if (!response.ok) throw new Error(`Failed to load poster logo: ${response.status}`);
-    return blobToDataUrl(await response.blob());
+    return logoBlobToDataUrl(await response.blob());
   }
 
   function loadImage(url) {
@@ -676,6 +708,8 @@
     if (typeof options.renderCanvas === "function") {
       return options.renderCanvas(summary, options);
     }
+    const nativeSnapshot = await tryRenderPosterWithNativeSnapshot(summary, options);
+    if (nativeSnapshot) return nativeSnapshot;
     if (canvasDocument(options)) {
       return renderCanvasPosterBlob(summary, options);
     }
@@ -724,6 +758,12 @@
       || null;
   }
 
+  function nativeSnapshotBridge(options = {}) {
+    return options.nativeSnapshotBridge
+      || (root && root.webkit && root.webkit.messageHandlers && root.webkit.messageHandlers.openTokenPosterSnapshot)
+      || null;
+  }
+
   function encodeBytesBase64(bytes) {
     if (typeof Buffer === "function") return Buffer.from(bytes).toString("base64");
     let binary = "";
@@ -732,6 +772,45 @@
       binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
     }
     return btoa(binary);
+  }
+
+  function decodeBase64Bytes(base64) {
+    if (typeof Buffer === "function") return new Uint8Array(Buffer.from(base64, "base64"));
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  function base64ToBlob(base64, type, options = {}) {
+    const BlobCtor = options.BlobCtor || (typeof Blob === "function" ? Blob : null);
+    if (typeof BlobCtor !== "function") throw new Error("Blob constructor unavailable");
+    return new BlobCtor([decodeBase64Bytes(base64)], { type });
+  }
+
+  async function tryRenderPosterWithNativeSnapshot(summary, options = {}) {
+    const bridge = nativeSnapshotBridge(options);
+    if (!bridge || typeof bridge.postMessage !== "function") return null;
+    try {
+      const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
+      const html = buildSharePosterExportHtml(summary, { ...options, templateHtml });
+      const response = await bridge.postMessage({
+        type: "text/html",
+        width: WIDTH,
+        height: HEIGHT,
+        html,
+      });
+      if (!response || response.ok !== true || !response.base64) {
+        throw new Error((response && response.error) || "native poster snapshot failed");
+      }
+      logPosterEvent("poster.nativeSnapshot.complete", { width: WIDTH, height: HEIGHT });
+      return base64ToBlob(response.base64, response.type || PNG_TYPE, options);
+    } catch (error) {
+      logPosterEvent("poster.nativeSnapshot.failed", { name: error && error.name, message: error && error.message });
+      return null;
+    }
   }
 
   function blobToDataUrl(blob, options = {}) {
@@ -852,6 +931,7 @@
   }
 
   return {
+    buildSharePosterExportHtml,
     buildSharePosterHtml,
     buildSharePosterSvg,
     drawSharePosterCanvas,

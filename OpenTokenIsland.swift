@@ -1,6 +1,97 @@
 import Cocoa
 import WebKit
 
+private final class PosterSnapshotJob: NSObject, WKNavigationDelegate {
+    private let html: String
+    private let width: CGFloat
+    private let height: CGFloat
+    private let replyHandler: (Any?, String?) -> Void
+    private let onComplete: (PosterSnapshotJob) -> Void
+    private let webView: WKWebView
+    private var timeoutWorkItem: DispatchWorkItem?
+    private var isCompleted = false
+
+    init(
+        html: String,
+        width: CGFloat,
+        height: CGFloat,
+        replyHandler: @escaping (Any?, String?) -> Void,
+        onComplete: @escaping (PosterSnapshotJob) -> Void
+    ) {
+        self.html = html
+        self.width = width
+        self.height = height
+        self.replyHandler = replyHandler
+        self.onComplete = onComplete
+        self.webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        super.init()
+        webView.navigationDelegate = self
+        webView.wantsLayer = true
+        webView.layer?.backgroundColor = NSColor.clear.cgColor
+        webView.setValue(false, forKey: "drawsBackground")
+    }
+
+    func start() {
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.finish(errorMessage: "snapshot-timeout")
+        }
+        timeoutWorkItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
+        webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.capture()
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(errorMessage: "snapshot-navigation-failed")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(errorMessage: "snapshot-navigation-failed")
+    }
+
+    private func capture() {
+        guard !isCompleted else { return }
+        let snapshotConfig = WKSnapshotConfiguration()
+        snapshotConfig.rect = NSRect(x: 0, y: 0, width: width, height: height)
+        snapshotConfig.snapshotWidth = NSNumber(value: Int(width))
+        webView.takeSnapshot(with: snapshotConfig) { [weak self] image, _ in
+            guard let self else { return }
+            guard let image,
+                  let tiff = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let png = bitmap.representation(using: .png, properties: [:]) else {
+                self.finish(errorMessage: "snapshot-png-failed")
+                return
+            }
+            let base64 = png.base64EncodedString()
+            self.complete(base64: base64)
+        }
+    }
+
+    private func complete(base64: String) {
+        guard !isCompleted else { return }
+        isCompleted = true
+        timeoutWorkItem?.cancel()
+        replyHandler(["ok": true, "type": "image/png", "base64": base64], nil)
+        webView.navigationDelegate = nil
+        onComplete(self)
+    }
+
+    private func finish(errorMessage: String) {
+        guard !isCompleted else { return }
+        isCompleted = true
+        timeoutWorkItem?.cancel()
+        replyHandler(nil, errorMessage)
+        webView.navigationDelegate = nil
+        onComplete(self)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandlerWithReply {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
@@ -18,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var didLoadIslandEventSnapshot = false
     private var isTerminating = false
     private var lastEventPollFailureLogAt = Date.distantPast
+    private var posterSnapshotJobs = [PosterSnapshotJob]()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -75,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let viewController = NSViewController()
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "openTokenClipboard")
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "openTokenPosterSnapshot")
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 430, height: 700), configuration: configuration)
         popoverWebView = webView
         webView.navigationDelegate = self
@@ -90,10 +183,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
-        guard message.name == "openTokenClipboard" else {
-            replyHandler(nil, "unknown-message")
+        if message.name == "openTokenClipboard" {
+            handleClipboardMessage(message, replyHandler: replyHandler)
             return
         }
+        if message.name == "openTokenPosterSnapshot" {
+            handlePosterSnapshotMessage(message, replyHandler: replyHandler)
+            return
+        }
+        replyHandler(nil, "unknown-message")
+    }
+
+    private func handleClipboardMessage(_ message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         guard let body = message.body as? [String: Any],
               let type = body["type"] as? String,
               type == "image/png",
@@ -121,6 +222,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             logIsland("poster.nativeCopy.failed", details: ["reason": "pasteboard-write-failed"])
             replyHandler(nil, "pasteboard-write-failed")
         }
+    }
+
+    private func handlePosterSnapshotMessage(_ message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let body = message.body as? [String: Any],
+              let type = body["type"] as? String,
+              type == "text/html",
+              let html = body["html"] as? String,
+              !html.isEmpty else {
+            logIsland("poster.nativeSnapshot.failed", details: ["reason": "invalid-message"])
+            replyHandler(nil, "invalid-message")
+            return
+        }
+
+        let width = CGFloat((body["width"] as? NSNumber)?.doubleValue ?? 1080)
+        let height = CGFloat((body["height"] as? NSNumber)?.doubleValue ?? 1920)
+        guard width > 0, height > 0 else {
+            logIsland("poster.nativeSnapshot.failed", details: ["reason": "invalid-size"])
+            replyHandler(nil, "invalid-size")
+            return
+        }
+
+        let job = PosterSnapshotJob(
+            html: html,
+            width: width,
+            height: height,
+            replyHandler: replyHandler,
+            onComplete: { [weak self] completedJob in
+                self?.posterSnapshotJobs.removeAll { $0 === completedJob }
+            }
+        )
+        posterSnapshotJobs.append(job)
+        logIsland("poster.nativeSnapshot.start", details: ["width": Int(width), "height": Int(height)])
+        job.start()
     }
 
     private func showIsland(reason: String = "manual") {
