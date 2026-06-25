@@ -718,6 +718,60 @@
     return options.ClipboardItemCtor || (root && root.ClipboardItem) || null;
   }
 
+  function nativeClipboardBridge(options = {}) {
+    return options.nativeClipboardBridge
+      || (root && root.webkit && root.webkit.messageHandlers && root.webkit.messageHandlers.openTokenClipboard)
+      || null;
+  }
+
+  function encodeBytesBase64(bytes) {
+    if (typeof Buffer === "function") return Buffer.from(bytes).toString("base64");
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function blobToDataUrl(blob, options = {}) {
+    if (typeof options.blobToDataUrl === "function") return options.blobToDataUrl(blob);
+    if (typeof FileReader === "function") {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("blob read failed"));
+        reader.readAsDataURL(blob);
+      });
+    }
+    if (blob && typeof blob.arrayBuffer === "function") {
+      return blob.arrayBuffer().then((buffer) => {
+        const base64 = encodeBytesBase64(new Uint8Array(buffer));
+        return `data:${blob.type || PNG_TYPE};base64,${base64}`;
+      });
+    }
+    return Promise.reject(new Error("blob data URL conversion unavailable"));
+  }
+
+  async function tryCopyPosterWithNativeBridge(blob, fileName, options = {}) {
+    const bridge = nativeClipboardBridge(options);
+    if (!bridge || typeof bridge.postMessage !== "function") return null;
+    try {
+      const dataUrl = await blobToDataUrl(blob, options);
+      const match = /^data:image\/png;base64,([a-z0-9+/=]+)$/i.exec(dataUrl);
+      if (!match) throw new Error("invalid PNG data URL");
+      const response = await bridge.postMessage({ type: PNG_TYPE, fileName, base64: match[1] });
+      if (!response || response.ok !== true) {
+        throw new Error((response && response.error) || "native clipboard copy failed");
+      }
+      logPosterEvent("poster.nativeCopy.complete", { action: "copied", fileName });
+      return { action: "copied", fileName };
+    } catch (error) {
+      logPosterEvent("poster.nativeCopy.failed", { name: error && error.name, message: error && error.message });
+      return null;
+    }
+  }
+
   async function tryCopyPosterBlob(blob, fileName, options = {}) {
     const clipboard = clipboardTarget(options);
     const ClipboardItemCtor = clipboardItemConstructor(options);
@@ -773,6 +827,8 @@
       const avoidFileShare = shouldAvoidFileShare(options, shareTarget);
 
       if (avoidFileShare) {
+        const nativeCopyResult = await tryCopyPosterWithNativeBridge(blob, fileName, options);
+        if (nativeCopyResult) return nativeCopyResult;
         const copyResult = await tryCopyPosterBlob(blob, fileName, options);
         if (copyResult) return copyResult;
       }

@@ -1,7 +1,7 @@
 import Cocoa
 import WebKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandlerWithReply {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var popoverWebView: WKWebView?
@@ -73,7 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     private func setupPopover() {
         let viewController = NSViewController()
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 430, height: 700))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "openTokenClipboard")
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 430, height: 700), configuration: configuration)
         popoverWebView = webView
         webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
@@ -84,6 +86,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(self.port)/popover.html")!))
+        }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.name == "openTokenClipboard" else {
+            replyHandler(nil, "unknown-message")
+            return
+        }
+        guard let body = message.body as? [String: Any],
+              let type = body["type"] as? String,
+              type == "image/png",
+              let base64 = body["base64"] as? String,
+              let data = Data(base64Encoded: base64),
+              !data.isEmpty else {
+            logIsland("poster.nativeCopy.failed", details: ["reason": "invalid-message"])
+            replyHandler(nil, "invalid-message")
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let wrotePng = pasteboard.setData(data, forType: .png)
+        var wroteTiff = false
+        if let image = NSImage(data: data),
+           let tiffData = image.tiffRepresentation {
+            wroteTiff = pasteboard.setData(tiffData, forType: .tiff)
+        }
+
+        if wrotePng || wroteTiff {
+            logIsland("poster.nativeCopy.complete", details: ["type": type])
+            replyHandler(["ok": true], nil)
+        } else {
+            logIsland("poster.nativeCopy.failed", details: ["reason": "pasteboard-write-failed"])
+            replyHandler(nil, "pasteboard-write-failed")
         }
     }
 

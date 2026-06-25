@@ -244,6 +244,75 @@ function createRecordingCanvasDocument() {
   assert.ok(drawnText.includes("8.6亿"));
   assert.equal(nativeDownloaded.fileName, "opentoken-token-identity.png");
 
+  let macNativeDownloaded = null;
+  let macNativeClipboardCalled = false;
+  const nativeMessages = [];
+  const macNativeCopyResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    blobToDataUrl: async () => "data:image/png;base64,cG5nLWJ5dGVz",
+    nativeClipboardBridge: {
+      postMessage(message) {
+        nativeMessages.push(message);
+        return Promise.resolve({ ok: true });
+      },
+    },
+    clipboardTarget: {
+      async write() {
+        macNativeClipboardCalled = true;
+      },
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    },
+    downloader: (blob, fileName) => {
+      macNativeDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macNativeCopyResult.action, "copied");
+  assert.equal(macNativeCopyResult.fileName, "opentoken-token-identity.png");
+  assert.equal(macNativeClipboardCalled, false);
+  assert.equal(macNativeDownloaded, null);
+  assert.deepEqual(nativeMessages, [{
+    type: "image/png",
+    fileName: "opentoken-token-identity.png",
+    base64: "cG5nLWJ5dGVz",
+  }]);
+
+  let nativeFailureDownloaded = null;
+  const nativeFailureMessages = [];
+  const nativeFailureClipboardWrites = [];
+  const nativeFailureResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    blobToDataUrl: async () => "data:image/png;base64,cG5nLWJ5dGVz",
+    nativeClipboardBridge: {
+      postMessage(message) {
+        nativeFailureMessages.push(message);
+        return Promise.resolve({ ok: false, error: "pasteboard-write-failed" });
+      },
+    },
+    ClipboardItemCtor: function TestClipboardItem(items) {
+      this.items = items;
+    },
+    clipboardTarget: {
+      async write(items) {
+        nativeFailureClipboardWrites.push(items);
+      },
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    },
+    downloader: (blob, fileName) => {
+      nativeFailureDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(nativeFailureResult.action, "copied");
+  assert.equal(nativeFailureMessages.length, 1);
+  assert.equal(nativeFailureClipboardWrites.length, 1);
+  assert.equal(nativeFailureClipboardWrites[0][0].items["image/png"].type, "image/png");
+  assert.equal(nativeFailureDownloaded, null);
+
   let macShareCalled = false;
   let macDownloaded = null;
   const clipboardWrites = [];
