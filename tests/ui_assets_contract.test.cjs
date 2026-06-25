@@ -98,6 +98,72 @@ test("popover refreshes when upload events arrive and after manual upload", () =
   assert.match(html, /waitForFreshSummary/);
 });
 
+test("client surfaces log every wired action and polling flow", () => {
+  const popover = read("popover.html");
+  const browser = read("index.html");
+  const island = read("island.html");
+  const poster = read("assets/share-poster.js");
+
+  for (const event of [
+    "popover.upload.click",
+    "popover.share.click",
+    "popover.refresh.click",
+    "popover.openLogs.click",
+    "popover.summary.load",
+    "popover.islandEvent.poll",
+  ]) {
+    assert.match(popover, new RegExp(event.replaceAll(".", "\\.")));
+  }
+
+  for (const event of [
+    "prototype.variant.click",
+    "prototype.event.click",
+    "prototype.panel.click",
+    "prototype.upload.click",
+    "prototype.escape.keydown",
+  ]) {
+    assert.match(browser, new RegExp(event.replaceAll(".", "\\.")));
+  }
+
+  assert.match(island, /island\.summary\.load/);
+  assert.match(poster, /poster\.download\.start/);
+  assert.match(poster, /poster\.download\.complete/);
+});
+
+test("client click actions do not await logging before the main action", () => {
+  const popover = read("popover.html");
+  const browser = read("index.html");
+  const island = read("island.html");
+
+  assert.doesNotMatch(popover, /await logClientEvent\('popover\.(upload|share|refresh|openLogs)\.click'/);
+  assert.match(popover, /void logClientEvent\('popover\.upload\.click'/);
+  assert.match(popover, /void logClientEvent\('popover\.share\.click'/);
+  assert.match(browser, /void logClientEvent\("prototype\.upload\.click"/);
+  assert.match(island, /void logClientEvent\('island\.summary\.load'/);
+});
+
+test("native app log lines use the shared JSON event schema", () => {
+  const swift = read("OpenTokenIsland.swift");
+
+  assert.match(swift, /JSONSerialization\.data\(withJSONObject: entry/);
+  assert.match(swift, /sanitizeLogString/);
+  assert.match(swift, /"layer": "app"/);
+  assert.match(swift, /"event": safeEvent/);
+  assert.match(swift, /logIsland\("event\.detected", details:/);
+  assert.doesNotMatch(swift, /logIsland\("[^"]*\\\(/);
+  assert.doesNotMatch(swift, /layer=app/);
+});
+
+test("poll failure logging is rate limited", () => {
+  const popover = read("popover.html");
+  const swift = read("OpenTokenIsland.swift");
+
+  assert.match(popover, /lastIslandEventFailureLogAt/);
+  assert.match(popover, /now - lastIslandEventFailureLogAt > 60000/);
+  assert.match(swift, /lastEventPollFailureLogAt/);
+  assert.match(swift, /timeIntervalSince\(lastEventPollFailureLogAt\) >= 60/);
+});
+
 test("manual popover upload stops waiting when the upload command fails", () => {
   const html = read("popover.html");
   assert.match(html, /!response\.ok \|\| !result \|\| result\.ok === false/);

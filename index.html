@@ -1222,10 +1222,31 @@
       const response = await fetch(`${API_BASE}/client-config`);
       const data = await response.json();
       apiToken = data.apiToken || "";
+      void logClientEvent("prototype.clientConfig.loaded", { hasToken: Boolean(apiToken) });
     }
 
     function tokenHeaders() {
       return apiToken ? { "x-opentoken-island-token": apiToken } : {};
+    }
+
+    function logClientEvent(event, details = {}) {
+      if (!apiToken) return Promise.resolve(false);
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timeout = controller ? setTimeout(() => controller.abort(), 1500) : null;
+      return fetch(`${API_BASE}/logs/event`, {
+        method: "POST",
+        headers: { ...tokenHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({
+          layer: "prototype",
+          event,
+          flow: event,
+          details
+        }),
+        keepalive: true,
+        signal: controller && controller.signal
+      }).then(() => true).catch(() => false).finally(() => {
+        if (timeout) clearTimeout(timeout);
+      });
     }
 
     function showEvent(type) {
@@ -1311,21 +1332,29 @@
     }
 
     async function loadSummary({ announce = false } = {}) {
+      void logClientEvent("prototype.summary.load", { announce });
       try {
         const response = await fetch(`${API_BASE}/summary`);
         const data = await response.json();
         renderSummary(data);
+        void logClientEvent("prototype.summary.loaded", {
+          status: response.status,
+          ok: Boolean(data && data.ok),
+          rank: data && data.rank || null
+        });
         if (announce) {
           events.rank.copy = `真实数据已刷新：今日 ${data.totalLabel} token，当前排名 #${data.rank}。`;
           showEvent("rank");
         }
       } catch (error) {
         serviceText.textContent = "Live API unavailable";
+        void logClientEvent("prototype.summary.failed", { message: error && error.message });
       }
     }
 
     variantButtons.forEach((button) => {
       button.addEventListener("click", () => {
+        void logClientEvent("prototype.variant.click", { variant: button.dataset.variant });
         variantButtons.forEach((item) => item.classList.toggle("active", item === button));
         const variant = button.dataset.variant;
         stage.classList.toggle("variant-a", variant === "a");
@@ -1335,11 +1364,15 @@
     });
 
     eventButtons.forEach((button) => {
-      button.addEventListener("click", () => showEvent(button.dataset.event));
+      button.addEventListener("click", () => {
+        void logClientEvent("prototype.event.click", { event: button.dataset.event });
+        showEvent(button.dataset.event);
+      });
     });
 
     panelButtons.forEach((button) => {
       button.addEventListener("click", () => {
+        void logClientEvent("prototype.panel.click", { willOpen: !popover.classList.contains("open") });
         island.classList.remove("show");
         clearTimeout(hideTimer);
         popover.classList.toggle("open");
@@ -1349,12 +1382,17 @@
 
     uploadButton.addEventListener("click", async () => {
       setLoading(true);
+      void logClientEvent("prototype.upload.click");
       try {
         const response = await fetch(`${API_BASE}/upload`, {
           method: "POST",
           headers: tokenHeaders()
         });
         const data = await response.json();
+        void logClientEvent("prototype.upload.complete", {
+          status: response.status,
+          ok: Boolean(data && data.ok)
+        });
         await loadSummary();
         events.achievement.copy = data.ok
           ? "已调用 opentoken upload，排行榜数据正在同步。"
@@ -1362,6 +1400,7 @@
         showEvent("achievement");
       } catch (error) {
         serviceText.textContent = "Upload API unavailable";
+        void logClientEvent("prototype.upload.failed", { message: error && error.message });
       } finally {
         setLoading(false);
       }
@@ -1369,6 +1408,7 @@
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        void logClientEvent("prototype.escape.keydown");
         island.classList.remove("show");
         popover.classList.remove("open");
       }
