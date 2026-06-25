@@ -32,11 +32,76 @@ test("native shell restarts the child node server after unexpected exits", () =>
     swift.indexOf("func applicationWillTerminate"),
     swift.indexOf("private func setupStatusItem")
   );
+  const prepareForQuit = swift.slice(
+    swift.indexOf("private func prepareForQuit()"),
+    swift.indexOf("private func stopServerProcess")
+  );
 
   assert.match(swift, /private var isTerminating = false/);
   assert.match(swift, /private func scheduleServerRestart\(reason: String\)/);
-  assert.match(terminate, /isTerminating = true/);
+  assert.match(terminate, /prepareForQuit\(\)/);
+  assert.match(prepareForQuit, /isTerminating = true/);
   assert.match(startServer, /if self\.serverProcess === process \{\s*self\.serverProcess = nil\s*\}/);
   assert.match(startServer, /self\.scheduleServerRestart\(reason: "server-exit"\)/);
   assert.match(startServer, /scheduleServerRestart\(reason: "launch-failed"\)/);
+});
+
+test("native status menu uses short recovery actions without logs or island item", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const setupStatusItem = swift.slice(
+    swift.indexOf("private func setupStatusItem()"),
+    swift.indexOf("private func setupPopover()")
+  );
+
+  assert.match(setupStatusItem, /NSMenuItem\(title: "打开", action: #selector\(openPanelNow\), keyEquivalent: "o"\)/);
+  assert.match(setupStatusItem, /NSMenuItem\(title: "刷新", action: #selector\(refreshNow\), keyEquivalent: "r"\)/);
+  assert.match(setupStatusItem, /NSMenuItem\(title: "网页", action: #selector\(openWebNow\), keyEquivalent: "w"\)/);
+  assert.match(setupStatusItem, /NSMenuItem\(title: "重启服务", action: #selector\(restartServerNow\), keyEquivalent: "s"\)/);
+  assert.match(setupStatusItem, /NSMenuItem\(title: "退出", action: #selector\(quit\), keyEquivalent: "q"\)/);
+  assert.match(setupStatusItem, /contextMenu\.addItem\(NSMenuItem\.separator\(\)\)/);
+  const menuTitles = [...setupStatusItem.matchAll(/NSMenuItem\(title: "([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(menuTitles, ["打开", "刷新", "网页", "重启服务", "退出"]);
+  assert.doesNotMatch(setupStatusItem, /Show Island|Open Logs|Quit OpenToken Island|Open Browser UI|显示悬浮岛|打开日志/);
+});
+
+test("native menu can restart the local server without showing the island", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const restartServerNow = swift.slice(
+    swift.indexOf("@objc private func restartServerNow()"),
+    swift.indexOf("@objc private func quit()")
+  );
+  const refreshNow = swift.slice(
+    swift.indexOf("@objc private func refreshNow()"),
+    swift.indexOf("@objc private func openWebNow()")
+  );
+
+  assert.match(restartServerNow, /logIsland\("menu\.restartServer\.clicked"\)/);
+  assert.match(restartServerNow, /stopServerProcess\(reason: "menu-restart"\)/);
+  assert.match(restartServerNow, /self\.startServer\(\)/);
+  assert.doesNotMatch(refreshNow, /showIsland/);
+});
+
+test("native quit menu item performs explicit shutdown before app termination", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const quit = swift.slice(
+    swift.indexOf("@objc private func quit()"),
+    swift.indexOf("@objc private func showContextMenu")
+  );
+  const prepareForQuit = swift.slice(
+    swift.indexOf("private func prepareForQuit()"),
+    swift.indexOf("private func stopServerProcess")
+  );
+
+  assert.match(quit, /logIsland\("menu\.quit\.clicked"\)/);
+  assert.match(quit, /prepareForQuit\(\)/);
+  assert.match(quit, /NSApp\.terminate\(nil\)/);
+  assert.match(prepareForQuit, /isTerminating = true/);
+  assert.match(prepareForQuit, /timer\?\.invalidate\(\)/);
+  assert.match(prepareForQuit, /eventTimer\?\.invalidate\(\)/);
+  assert.match(prepareForQuit, /popover\.performClose\(nil\)/);
+  assert.match(prepareForQuit, /islandWindow\?\.orderOut\(nil\)/);
+  assert.match(prepareForQuit, /stopServerProcess\(reason: "quit"\)/);
+  assert.match(swift, /import Darwin/);
+  assert.match(swift, /kill\(process\.processIdentifier, SIGKILL\)/);
 });

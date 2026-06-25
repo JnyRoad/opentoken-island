@@ -121,33 +121,26 @@ fn main() {
         .expect("failed to build OpenToken Island")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                if let Some(state) = app.try_state::<ServerProcess>() {
-                    if let Ok(mut child) = state.0.lock() {
-                        if let Some(mut child) = child.take() {
-                            let _ = child.kill();
-                        }
-                    }
-                }
+                stop_server_process(app);
             }
         });
 }
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open_panel = MenuItem::with_id(app, "open-panel", "Open Panel", true, None::<&str>)?;
-    let show_island_item =
-        MenuItem::with_id(app, "show-island", "Show Island", true, None::<&str>)?;
-    let open_browser =
-        MenuItem::with_id(app, "open-browser", "Open Browser UI", true, None::<&str>)?;
-    let open_logs = MenuItem::with_id(app, "open-logs", "Open Logs", true, None::<&str>)?;
+    let open_panel = MenuItem::with_id(app, "open-panel", "打开", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "refresh", "刷新", true, None::<&str>)?;
+    let open_browser = MenuItem::with_id(app, "open-browser", "网页", true, None::<&str>)?;
+    let restart_server_item =
+        MenuItem::with_id(app, "restart-server", "重启服务", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit OpenToken Island", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &open_panel,
-            &show_island_item,
+            &refresh,
             &open_browser,
-            &open_logs,
+            &restart_server_item,
             &separator,
             &quit,
         ],
@@ -162,20 +155,21 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 log_desktop_event("tauri.menu.openPanel.click");
                 let _ = show_panel(app);
             }
-            "show-island" => {
-                log_desktop_event("tauri.menu.showIsland.click");
-                let _ = show_island(app);
+            "refresh" => {
+                log_desktop_event("tauri.menu.refresh.click");
+                let _ = refresh_panel(app);
             }
             "open-browser" => {
                 log_desktop_event("tauri.menu.openBrowser.click");
                 let _ = open_external(&local_url("popover.html"));
             }
-            "open-logs" => {
-                log_desktop_event("tauri.menu.openLogs.click");
-                let _ = open_logs_file();
+            "restart-server" => {
+                log_desktop_event("tauri.menu.restartServer.click");
+                let _ = restart_server(app);
             }
             "quit" => {
                 log_desktop_event("tauri.menu.quit.click");
+                stop_server_process(app);
                 app.exit(0);
             }
             _ => {}
@@ -269,6 +263,22 @@ fn start_server_if_needed(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn stop_server_process(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ServerProcess>() {
+        if let Ok(mut slot) = state.0.lock() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+fn restart_server(app: &AppHandle) -> tauri::Result<()> {
+    stop_server_process(app);
+    start_server_if_needed(app)
+}
+
 fn wait_for_server(port: u16, timeout: Duration) -> tauri::Result<()> {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
@@ -295,6 +305,13 @@ fn show_panel(app: &AppHandle) -> tauri::Result<()> {
         .cursor_position()
         .unwrap_or_else(|_| PhysicalPosition::new(0.0, 0.0));
     pin_panel(app, cursor, Rect::default())
+}
+
+fn refresh_panel(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(PANEL_LABEL) {
+        window.eval("window.OpenTokenIslandRefresh && window.OpenTokenIslandRefresh()")?;
+    }
+    Ok(())
 }
 
 fn pin_panel(app: &AppHandle, cursor: PhysicalPosition<f64>, rect: Rect) -> tauri::Result<()> {
@@ -361,27 +378,6 @@ fn show_hover_panel(
     window.set_position(Position::Physical(position))?;
     window.show()?;
     schedule_hide_panel_at_epoch(app, Duration::from_secs(3), epoch);
-    Ok(())
-}
-
-fn show_island(app: &AppHandle) -> tauri::Result<()> {
-    log_desktop_event("tauri.island.show");
-    let cursor = app
-        .cursor_position()
-        .unwrap_or_else(|_| PhysicalPosition::new(0.0, 0.0));
-    let window = ensure_island_window(app)?;
-    let position = floating_position(
-        app,
-        cursor,
-        Rect::default(),
-        ISLAND_WIDTH,
-        ISLAND_HEIGHT,
-        FLOATING_MARGIN,
-        FLOATING_MARGIN,
-    );
-    window.set_position(Position::Physical(position))?;
-    window.show()?;
-    schedule_hide_island(app, Duration::from_secs(5));
     Ok(())
 }
 
@@ -504,17 +500,6 @@ fn hide_pinned_panel_on_blur(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn schedule_hide_island(app: &AppHandle, delay: Duration) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(delay);
-        let app_for_main = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let _ = hide_island(&app_for_main);
-        });
-    });
-}
-
 fn hide_island(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(ISLAND_LABEL) {
         log_desktop_event("tauri.island.hide");
@@ -562,11 +547,6 @@ fn external_url(path: &str) -> tauri::Result<Url> {
             format!("invalid local OpenToken Island URL for {path}: {error}"),
         ))
     })
-}
-
-fn open_logs_file() -> std::io::Result<()> {
-    let log = user_home().join(".opentoken").join("island-events.log");
-    open_external(&log.to_string_lossy())
 }
 
 fn resolve_server_path(app: &AppHandle) -> PathBuf {

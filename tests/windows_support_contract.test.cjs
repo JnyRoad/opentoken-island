@@ -61,6 +61,58 @@ assert.match(
 );
 assert.match(
   mainRs,
+  /MenuItem::with_id\(app, "open-panel", "打开", true, None::<&str>\)/,
+  "Tray context menu should use a short open label"
+);
+assert.match(
+  mainRs,
+  /MenuItem::with_id\(app, "refresh", "刷新", true, None::<&str>\)/,
+  "Tray context menu should include a short refresh label"
+);
+assert.match(
+  mainRs,
+  /MenuItem::with_id\(app, "open-browser", "网页", true, None::<&str>\)/,
+  "Tray context menu should include a short web label"
+);
+assert.match(
+  mainRs,
+  /MenuItem::with_id\(app, "restart-server", "重启服务", true, None::<&str>\)/,
+  "Tray context menu should include local server restart"
+);
+assert.match(
+  mainRs,
+  /MenuItem::with_id\(app, "quit", "退出", true, None::<&str>\)/,
+  "Tray context menu should use the short quit label"
+);
+assert.deepEqual(
+  [...mainRs.matchAll(/MenuItem::with_id\(app, "([^"]+)", "([^"]+)"/g)]
+    .map((match) => [match[1], match[2]]),
+  [
+    ["open-panel", "打开"],
+    ["refresh", "刷新"],
+    ["open-browser", "网页"],
+    ["restart-server", "重启服务"],
+    ["quit", "退出"],
+  ],
+  "Tray context menu should expose only the approved short actions"
+);
+assert.doesNotMatch(
+  mainRs,
+  /show-island|open-logs|Show Island|Open Logs|Quit OpenToken Island|Open Browser UI|显示悬浮岛|打开日志/,
+  "Tray context menu must not expose removed or long menu labels"
+);
+assert.match(
+  mainRs,
+  /"restart-server" => \{[\s\S]*restart_server\(app\)/,
+  "Restart menu item must restart the managed local server"
+);
+assert.match(
+  mainRs,
+  /fn stop_server_process\(app: &AppHandle\)/,
+  "Quit and restart should share explicit managed server shutdown"
+);
+assert.match(
+  mainRs,
   /WindowEvent::Focused\(false\)[\s\S]*hide_pinned_panel_on_blur/,
   "Pinned tray panel must hide when the user clicks outside and the window loses focus"
 );
