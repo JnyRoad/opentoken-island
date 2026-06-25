@@ -113,11 +113,25 @@ const path = require("path");
 const [configPath, statePath, opentokenBin, nodeBin, port] = process.argv.slice(2);
 const upstreamOrigin = "https://scys.com";
 
-function readJson(file, fallback = {}) {
+function readJson(file, { fallback = {}, tolerateCorruption = false } = {}) {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
+    raw = fs.readFileSync(file, "utf8");
+  } catch (readError) {
+    if (readError.code === "ENOENT") return fallback;
+    throw readError;
+  }
+  if (raw.trim() === "") return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (parseError) {
+    // The installer may rebuild its own island state cache, but it must not
+    // silently replace the user's OpenToken config when that file is corrupt.
+    if (tolerateCorruption) {
+      console.warn(`warning: ignoring corrupt JSON at ${file}, using empty state: ${parseError.message}`);
+      return fallback;
+    }
+    throw new Error(`Failed to parse JSON at ${file}: ${parseError.message}`);
   }
 }
 
@@ -146,7 +160,7 @@ function upstreamFromLocal(localUrl) {
 }
 
 const config = readJson(configPath);
-const state = readJson(statePath);
+const state = readJson(statePath, { tolerateCorruption: true });
 const currentWebhook = String(config.webhook_url || "");
 
 if (!currentWebhook && !state.upstreamUrl) {

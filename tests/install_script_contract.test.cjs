@@ -11,6 +11,31 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), "utf8");
 }
 
+function installProxyNodeScript() {
+  const installScript = read("scripts/install.sh");
+  const functionStart = installScript.indexOf("configure_opentoken_proxy() {");
+  assert.notEqual(functionStart, -1);
+  const start = installScript.indexOf("<<'NODE'\n", functionStart);
+  const end = installScript.indexOf("\nNODE\n", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  return installScript.slice(start + "<<'NODE'\n".length, end);
+}
+
+function runInstallProxyNode(configPath, statePath) {
+  return spawnSync(process.execPath, [
+    "-",
+    configPath,
+    statePath,
+    "/tmp/opentoken",
+    process.execPath,
+    "4999",
+  ], {
+    input: installProxyNodeScript(),
+    encoding: "utf8",
+  });
+}
+
 test("installer script is executable because build-pkg invokes it directly", () => {
   const mode = fs.statSync(path.join(root, "scripts", "install.sh")).mode;
   assert.ok(mode & 0o111, "scripts/install.sh must keep an executable bit");
@@ -32,6 +57,43 @@ test("installer primes an initial upload after the local API is ready", () => {
   assert.match(installScript, /spawn\(opentokenBin, \["upload"\], \{ stdio: "ignore" \}\)/);
   assert.match(installScript, /setTimeout\(\(\) =>/);
   assert.match(installScript, /click Upload now or wait for the next daemon upload/);
+});
+
+test("installer does not silently replace corrupt OpenToken config JSON", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "opentoken-install-config-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "config.json");
+  const statePath = path.join(directory, "island-state.json");
+  fs.writeFileSync(configPath, "{not json");
+  fs.writeFileSync(statePath, JSON.stringify({
+    upstreamUrl: "https://scys.com/tokenrank/api/subapp/u/account",
+  }));
+
+  const result = runInstallProxyNode(configPath, statePath);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Failed to parse JSON/);
+  assert.equal(fs.readFileSync(configPath, "utf8"), "{not json");
+});
+
+test("installer tolerates corrupt island state cache without replacing config", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "opentoken-install-state-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "config.json");
+  const statePath = path.join(directory, "island-state.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    webhook_url: "https://scys.com/tokenrank/api/subapp/u/account?date=today",
+  }));
+  fs.writeFileSync(statePath, "{not json");
+
+  const result = runInstallProxyNode(configPath, statePath);
+
+  assert.equal(result.status, 0, result.stderr);
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.match(result.stderr, /warning: ignoring corrupt JSON/);
+  assert.equal(config.webhook_url, "http://127.0.0.1:4999/tokenrank/api/subapp/u/account?date=today");
+  assert.equal(state.upstreamUrl, "https://scys.com/tokenrank/api/subapp/u/account?date=today");
 });
 
 test("LaunchAgent tracks the app process and relaunches after abnormal exits", () => {

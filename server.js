@@ -39,13 +39,14 @@ const LEADERBOARD_MAX_ATTEMPTS = 4;
 const LEADERBOARD_RETRY_DELAY_MS = 900;
 const PENDING_LEADERBOARD_REFRESH_MS = 60000;
 const CONFIRMED_LEADERBOARD_REFRESH_MS = 300000;
+const EXPECTED_BINARY_PROBE_ERRORS = new Set(["ENOENT", "EACCES", "EPERM", "ENOTDIR"]);
 const serveStatic = createStaticFileHandler(ROOT);
 
 let state = loadState();
 let leaderboardRefreshPromise = null;
 const OPENTOKEN = process.env.OPENTOKEN_BIN || state.opentokenBin || findOpenTokenBinary() || "opentoken";
 
-function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false } = {}) {
+function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false, warn = console.warn } = {}) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -60,7 +61,7 @@ function parseJsonFileOrEmpty(filePath, { tolerateCorruption = false } = {}) {
     if (tolerateCorruption) {
       // The state file is a server-owned, rebuildable cache. A truncated write must
       // not brick startup — warn loudly (never silent) and fall back to empty.
-      console.warn(`[server] ignoring corrupt JSON at ${filePath}, using empty state: ${error.message}`);
+      warn(`[server] ignoring corrupt JSON at ${filePath}, using empty state: ${error.message}`);
       return {};
     }
     throw new Error(`Failed to parse JSON at ${filePath}: ${error.message}`);
@@ -82,7 +83,9 @@ function findOpenTokenBinary() {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
-    } catch {}
+    } catch (error) {
+      if (!EXPECTED_BINARY_PROBE_ERRORS.has(error.code)) throw error;
+    }
   }
   return "";
 }
@@ -760,4 +763,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, parseJsonFileOrEmpty };
+module.exports = { server, findOpenTokenBinary, parseJsonFileOrEmpty };
