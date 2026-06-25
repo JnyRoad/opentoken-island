@@ -154,7 +154,7 @@
     return String(Math.round(clamp(progress, 0, 1) * 1000) / 10);
   }
 
-  function templateValueMap(summary = {}, options = {}) {
+  function posterTextModel(summary = {}, options = {}) {
     const total = Math.max(0, numberOrZero(summary?.total));
     const identity = getTokenIdentity(total);
     const rankValue = fieldValue(summary, options, "rank");
@@ -166,26 +166,43 @@
       : "#--";
     const gapToPrevious = hasRank ? (rank === 1 ? "榜首" : fieldValue(summary, options, "gapToPreviousLabel") || "--") : "等待确认";
     const leadOverNext = hasRank ? fieldValue(summary, options, "leadOverNextLabel") || "--" : "等待确认";
+    const totalLabel = summary?.totalLabel && summary.totalLabel !== "--" ? String(summary.totalLabel) : formatCount(total);
+    return {
+      total,
+      identity,
+      rank,
+      hasRank,
+      rankEstimated,
+      rankLabel: String(rankLabel),
+      gapToPrevious: String(gapToPrevious),
+      leadOverNext: String(leadOverNext),
+      totalLabel,
+      scaleProgress: scaleProgress(identity),
+    };
+  }
+
+  function templateValueMap(summary = {}, options = {}) {
+    const model = posterTextModel(summary, options);
     const replacements = {
-      REALM_TITLE: escapeHtml(identity.title),
-      REALM_DESCRIPTION: escapeHtml(identity.description),
-      RANK_LABEL: escapeHtml(rankLabel),
-      RANK_DELTA_BADGE: buildRankDeltaBadge(fieldValue(summary, options, "rankDelta"), rankEstimated),
-      GAP_TO_PREVIOUS: escapeHtml(gapToPrevious),
-      GAP_TO_PREVIOUS_UNIT: escapeHtml(tokenUnitFor(gapToPrevious)),
-      LEAD_OVER_NEXT: escapeHtml(leadOverNext),
-      LEAD_OVER_NEXT_UNIT: escapeHtml(tokenUnitFor(leadOverNext)),
-      TOTAL_LABEL: escapeHtml(summary?.totalLabel && summary.totalLabel !== "--" ? summary.totalLabel : formatCount(total)),
-      SCALE_PROGRESS: scaleProgress(identity),
+      REALM_TITLE: escapeHtml(model.identity.title),
+      REALM_DESCRIPTION: escapeHtml(model.identity.description),
+      RANK_LABEL: escapeHtml(model.rankLabel),
+      RANK_DELTA_BADGE: buildRankDeltaBadge(fieldValue(summary, options, "rankDelta"), model.rankEstimated),
+      GAP_TO_PREVIOUS: escapeHtml(model.gapToPrevious),
+      GAP_TO_PREVIOUS_UNIT: escapeHtml(tokenUnitFor(model.gapToPrevious)),
+      LEAD_OVER_NEXT: escapeHtml(model.leadOverNext),
+      LEAD_OVER_NEXT_UNIT: escapeHtml(tokenUnitFor(model.leadOverNext)),
+      TOTAL_LABEL: escapeHtml(model.totalLabel),
+      SCALE_PROGRESS: model.scaleProgress,
     };
 
     TOKEN_IDENTITIES.forEach((tier, index) => {
-      replacements[`NODE_${index}_CLASS`] = index < identity.index
+      replacements[`NODE_${index}_CLASS`] = index < model.identity.index
         ? "done"
-        : index === identity.index
+        : index === model.identity.index
           ? "cur"
           : "future";
-      replacements[`TICK_${index}_CLASS`] = index === identity.index ? "cur" : "";
+      replacements[`TICK_${index}_CLASS`] = index === model.identity.index ? "cur" : "";
       replacements[`TIER_${index}_TITLE`] = escapeHtml(tier.title);
     });
 
@@ -294,6 +311,379 @@
     }
   }
 
+  function canvasDocument(options = {}) {
+    return options.document || (root && root.document) || null;
+  }
+
+  function font(size, weight = 700) {
+    return `${weight} ${size}px "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
+  }
+
+  function roundedRect(context, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + r, y);
+    context.lineTo(x + width - r, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + r);
+    context.lineTo(x + width, y + height - r);
+    context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    context.lineTo(x + r, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - r);
+    context.lineTo(x, y + r);
+    context.quadraticCurveTo(x, y, x + r, y);
+    context.closePath();
+  }
+
+  function fillRoundRect(context, x, y, width, height, radius, fillStyle) {
+    context.save();
+    context.fillStyle = fillStyle;
+    roundedRect(context, x, y, width, height, radius);
+    context.fill();
+    context.restore();
+  }
+
+  function strokeRoundRect(context, x, y, width, height, radius, strokeStyle, lineWidth = 1.5) {
+    context.save();
+    context.strokeStyle = strokeStyle;
+    context.lineWidth = lineWidth;
+    roundedRect(context, x, y, width, height, radius);
+    context.stroke();
+    context.restore();
+  }
+
+  function drawFittedText(context, text, x, y, options = {}) {
+    const content = String(text ?? "");
+    const weight = options.weight || 700;
+    const minSize = options.minSize || 16;
+    let size = options.size || 32;
+    const maxWidth = options.maxWidth || WIDTH;
+    context.textAlign = options.align || "left";
+    context.textBaseline = options.baseline || "alphabetic";
+    context.fillStyle = options.color || "#F7EFD6";
+    context.font = font(size, weight);
+    while (size > minSize && context.measureText(content).width > maxWidth) {
+      size -= 2;
+      context.font = font(size, weight);
+    }
+    context.fillText(content, x, y);
+    return size;
+  }
+
+  function drawGrid(context) {
+    context.save();
+    context.globalAlpha = 0.18;
+    context.strokeStyle = "rgba(215,239,229,.22)";
+    context.lineWidth = 1;
+    for (let x = 0; x <= WIDTH; x += 72) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, HEIGHT);
+      context.stroke();
+    }
+    for (let y = 0; y <= HEIGHT; y += 72) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(WIDTH, y);
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  function drawRings(context) {
+    context.save();
+    context.strokeStyle = "rgba(215,239,229,.14)";
+    [320, 215, 120].forEach((radius, index) => {
+      context.globalAlpha = [0.8, 0.55, 0.4][index];
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(985, 150, radius, 0, Math.PI * 2);
+      context.stroke();
+    });
+    context.restore();
+  }
+
+  function drawLogo(context) {
+    const logoGradient = context.createLinearGradient(84, 96, 222, 234);
+    logoGradient.addColorStop(0, "rgba(0,71,64,.92)");
+    logoGradient.addColorStop(1, "rgba(0,46,42,.95)");
+    fillRoundRect(context, 84, 96, 138, 138, 30, logoGradient);
+    strokeRoundRect(context, 84, 96, 138, 138, 30, "rgba(215,239,229,.32)", 1.5);
+    drawFittedText(context, "Open", 153, 166, {
+      align: "center",
+      baseline: "middle",
+      color: "#F7EFD6",
+      size: 36,
+      weight: 900,
+      maxWidth: 112,
+    });
+    drawFittedText(context, "Token", 153, 204, {
+      align: "center",
+      baseline: "middle",
+      color: "#00A889",
+      size: 36,
+      weight: 900,
+      maxWidth: 112,
+    });
+  }
+
+  function drawPill(context, x, y, width, height, text) {
+    fillRoundRect(context, x, y, width, height, 34, "rgba(0,71,64,.45)");
+    strokeRoundRect(context, x, y, width, height, 34, "rgba(215,239,229,.2)", 1.5);
+    context.save();
+    context.fillStyle = "#00A889";
+    context.beginPath();
+    context.arc(x + 31, y + height / 2, 7.5, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    drawFittedText(context, text, x + 54, y + height / 2 + 1, {
+      baseline: "middle",
+      color: "#F7EFD6",
+      size: 27,
+      weight: 800,
+      maxWidth: width - 80,
+    });
+  }
+
+  function drawGapCard(context, x, y, width, label, value, unit, accent = false) {
+    fillRoundRect(context, x, y, width, 170, 26, "rgba(0,71,64,.5)");
+    strokeRoundRect(context, x, y, width, 170, 26, accent ? "rgba(0,168,137,.4)" : "rgba(215,239,229,.16)", 1.5);
+    drawFittedText(context, label, x + 32, y + 50, {
+      color: "#D7EFE5",
+      size: 25,
+      weight: 700,
+      maxWidth: width - 64,
+    });
+    drawFittedText(context, value, x + 32, y + 124, {
+      color: accent ? "#00A889" : "#F7EFD6",
+      size: 62,
+      minSize: 34,
+      weight: 900,
+      maxWidth: width - 92,
+    });
+    if (unit) {
+      drawFittedText(context, unit, x + width - 36, y + 124, {
+        align: "right",
+        color: "#D7EFE5",
+        size: 27,
+        minSize: 18,
+        weight: 700,
+        maxWidth: 86,
+      });
+    }
+  }
+
+  function drawScale(context, model) {
+    const y = 1448;
+    drawFittedText(context, "修为境界", 84, y, {
+      color: "#F7EFD6",
+      size: 23,
+      weight: 900,
+      maxWidth: 300,
+    });
+    fillRoundRect(context, 84, y + 36, 912, 10, 6, "rgba(215,239,229,.2)");
+    const progressWidth = clamp(Number(model.scaleProgress) || 0, 0, 100) / 100 * 912;
+    const progressGradient = context.createLinearGradient(84, y + 36, 996, y + 36);
+    progressGradient.addColorStop(0, "#00826F");
+    progressGradient.addColorStop(1, "#00A889");
+    fillRoundRect(context, 84, y + 36, progressWidth, 10, 6, progressGradient);
+
+    TOKEN_IDENTITIES.forEach((tier, index) => {
+      const x = 84 + (912 / (TOKEN_IDENTITIES.length - 1)) * index;
+      const isCurrent = index === model.identity.index;
+      const isDone = index < model.identity.index;
+      context.save();
+      context.fillStyle = isCurrent ? "#F7EFD6" : isDone ? "#00A889" : "rgba(215,239,229,.45)";
+      context.beginPath();
+      context.arc(x, y + 41, isCurrent ? 21 : 10, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+      drawFittedText(context, tier.title, x, y + 98, {
+        align: "center",
+        color: isCurrent ? "#F7EFD6" : "#D7EFE5",
+        size: isCurrent ? 28 : 23,
+        minSize: 16,
+        weight: isCurrent ? 900 : 800,
+        maxWidth: 132,
+      });
+    });
+  }
+
+  function drawSharePosterCanvas(context, summary, options = {}) {
+    const model = posterTextModel(summary, options);
+    const bg = context.createLinearGradient(0, 0, WIDTH, HEIGHT);
+    bg.addColorStop(0, "#004740");
+    bg.addColorStop(0.52, "#00826F");
+    bg.addColorStop(1, "#005B50");
+    context.fillStyle = bg;
+    context.fillRect(0, 0, WIDTH, HEIGHT);
+
+    const topGlow = context.createRadialGradient(885, 115, 0, 885, 115, 760);
+    topGlow.addColorStop(0, "rgba(0,168,137,.42)");
+    topGlow.addColorStop(1, "rgba(0,168,137,0)");
+    context.fillStyle = topGlow;
+    context.fillRect(0, 0, WIDTH, HEIGHT);
+    drawGrid(context);
+    drawRings(context);
+
+    drawLogo(context);
+    drawFittedText(context, "AI TOKEN IDENTITY", 252, 138, {
+      color: "#F7EFD6",
+      size: 30,
+      weight: 900,
+      maxWidth: 520,
+    });
+    drawFittedText(context, "个人 AI 消耗画像 · 修为快照", 252, 184, {
+      color: "#D7EFE5",
+      size: 21,
+      weight: 600,
+      maxWidth: 560,
+    });
+    fillRoundRect(context, 854, 96, 142, 58, 30, "rgba(0,71,64,.6)");
+    strokeRoundRect(context, 854, 96, 142, 58, 30, "rgba(215,239,229,.34)", 1.5);
+    drawFittedText(context, "2026 版", 925, 126, {
+      align: "center",
+      baseline: "middle",
+      color: "#F7EFD6",
+      size: 24,
+      weight: 900,
+      maxWidth: 104,
+    });
+
+    drawPill(context, 84, 298, 348, 68, "我的 AI 修为，已修到");
+    drawFittedText(context, model.identity.title, 84, 562, {
+      color: "#F7EFD6",
+      size: 224,
+      minSize: 116,
+      weight: 900,
+      maxWidth: 912,
+    });
+    fillRoundRect(context, 88, 604, 172, 14, 8, "rgba(0,168,137,.9)");
+    drawFittedText(context, model.identity.description, 84, 692, {
+      color: "#D7EFE5",
+      size: 38,
+      minSize: 26,
+      weight: 700,
+      maxWidth: 912,
+    });
+
+    const rankGradient = context.createLinearGradient(84, 744, 996, 1102);
+    rankGradient.addColorStop(0, "rgba(0,63,57,.92)");
+    rankGradient.addColorStop(1, "rgba(0,46,42,.92)");
+    fillRoundRect(context, 84, 744, 912, 358, 40, rankGradient);
+    strokeRoundRect(context, 84, 744, 912, 358, 40, "rgba(215,239,229,.2)", 1.5);
+    drawFittedText(context, "今日总榜排名", 136, 820, {
+      color: "#D7EFE5",
+      size: 24,
+      weight: 800,
+      maxWidth: 360,
+    });
+    drawFittedText(context, model.rankLabel, 136, 946, {
+      color: "#F7EFD6",
+      size: 136,
+      minSize: 72,
+      weight: 900,
+      maxWidth: 430,
+    });
+    const delta = model.rankEstimated ? null : describeDelta(fieldValue(summary, options, "rankDelta"));
+    if (delta) {
+      const deltaText = `${delta.icon === "up" ? "+" : "-"}${delta.label}`;
+      fillRoundRect(context, 564, 858, 142, 68, 24, delta.icon === "up" ? "rgba(0,168,137,.16)" : "rgba(215,239,229,.10)");
+      strokeRoundRect(context, 564, 858, 142, 68, 24, delta.icon === "up" ? "rgba(0,168,137,.6)" : "rgba(215,239,229,.36)", 1.5);
+      drawFittedText(context, deltaText, 635, 892, {
+        align: "center",
+        baseline: "middle",
+        color: delta.icon === "up" ? "#00A889" : "#D7EFE5",
+        size: 40,
+        weight: 900,
+        maxWidth: 100,
+      });
+    }
+    drawGapCard(context, 136, 910, 380, "距上一名", model.gapToPrevious, tokenUnitFor(model.gapToPrevious), false);
+    drawGapCard(context, 564, 910, 380, "领先下一名", model.leadOverNext, tokenUnitFor(model.leadOverNext), true);
+
+    fillRoundRect(context, 84, 1132, 912, 218, 36, "rgba(0,71,64,.4)");
+    strokeRoundRect(context, 84, 1132, 912, 218, 36, "rgba(215,239,229,.18)", 1.5);
+    drawFittedText(context, "TOTAL TOKENS", 136, 1198, {
+      color: "#00A889",
+      size: 23,
+      weight: 900,
+      maxWidth: 360,
+    });
+    drawFittedText(context, model.totalLabel, 136, 1306, {
+      color: "#F7EFD6",
+      size: 106,
+      minSize: 52,
+      weight: 900,
+      maxWidth: 650,
+    });
+    drawFittedText(context, "tokens", 918, 1298, {
+      align: "right",
+      color: "#D7EFE5",
+      size: 34,
+      weight: 700,
+      maxWidth: 160,
+    });
+
+    drawScale(context, model);
+    fillRoundRect(context, 84, 1660, 912, 116, 28, "rgba(0,71,64,.46)");
+    strokeRoundRect(context, 84, 1660, 912, 116, 28, "rgba(215,239,229,.2)", 1.5);
+    fillRoundRect(context, 84, 1660, 6, 116, 3, "#00A889");
+    drawFittedText(context, `“我测了一下，原来我已经修到${model.identity.title}了。”`, 124, 1723, {
+      baseline: "middle",
+      color: "#F7EFD6",
+      size: 33,
+      minSize: 24,
+      weight: 900,
+      maxWidth: 832,
+    });
+    drawFittedText(context, "OpenToken Island 生成 · 本地统计 · 不上传明细", WIDTH / 2, 1836, {
+      align: "center",
+      color: "#D7EFE5",
+      size: 23,
+      weight: 600,
+      maxWidth: 720,
+    });
+    return model;
+  }
+
+  function canvasToPngBlob(canvas) {
+    if (!canvas || typeof canvas.toBlob !== "function") {
+      throw new Error("Canvas PNG export is unavailable");
+    }
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to render poster PNG"));
+      }, PNG_TYPE);
+    });
+  }
+
+  async function renderCanvasPosterBlob(summary, options = {}) {
+    const documentRef = canvasDocument(options);
+    if (!documentRef || typeof documentRef.createElement !== "function") {
+      throw new Error("Canvas document is unavailable");
+    }
+    const canvas = documentRef.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const context = canvas.getContext && canvas.getContext("2d");
+    if (!context) throw new Error("Canvas is unavailable");
+    drawSharePosterCanvas(context, summary, options);
+    return canvasToPngBlob(canvas);
+  }
+
+  async function renderSharePosterPngBlob(summary, options = {}) {
+    if (typeof options.renderCanvas === "function") {
+      return options.renderCanvas(summary, options);
+    }
+    if (canvasDocument(options)) {
+      return renderCanvasPosterBlob(summary, options);
+    }
+    const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
+    const svg = buildSharePosterSvg(summary, { ...options, templateHtml });
+    return options.renderSvg ? options.renderSvg(svg) : svgToPngBlob(svg);
+  }
+
   function downloadBlob(blob, fileName) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -305,6 +695,124 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function isMacPlatform(shareTarget) {
+    const target = shareTarget || (root && root.navigator) || {};
+    const platform = `${target.platform || ""}`;
+    const userAgent = `${target.userAgent || ""}`;
+    const touchPoints = Number(target.maxTouchPoints || 0);
+    if (/(iPhone|iPad|iPod)/i.test(`${platform} ${userAgent}`)) return false;
+    if (/Mac/i.test(platform)) return touchPoints === 0;
+    return /Macintosh|Mac OS X/i.test(userAgent) && touchPoints === 0;
+  }
+
+  function shouldAvoidFileShare(options, shareTarget) {
+    if (typeof options.avoidFileShare === "boolean") return options.avoidFileShare;
+    return isMacPlatform(shareTarget);
+  }
+
+  function clipboardTarget(options = {}) {
+    return options.clipboardTarget || (root && root.navigator && root.navigator.clipboard) || null;
+  }
+
+  function clipboardItemConstructor(options = {}) {
+    return options.ClipboardItemCtor || (root && root.ClipboardItem) || null;
+  }
+
+  function nativeClipboardBridge(options = {}) {
+    return options.nativeClipboardBridge
+      || (root && root.webkit && root.webkit.messageHandlers && root.webkit.messageHandlers.openTokenClipboard)
+      || null;
+  }
+
+  function encodeBytesBase64(bytes) {
+    if (typeof Buffer === "function") return Buffer.from(bytes).toString("base64");
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function blobToDataUrl(blob, options = {}) {
+    if (typeof options.blobToDataUrl === "function") return options.blobToDataUrl(blob);
+    if (typeof FileReader === "function") {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("blob read failed"));
+        reader.readAsDataURL(blob);
+      });
+    }
+    if (blob && typeof blob.arrayBuffer === "function") {
+      return blob.arrayBuffer().then((buffer) => {
+        const base64 = encodeBytesBase64(new Uint8Array(buffer));
+        return `data:${blob.type || PNG_TYPE};base64,${base64}`;
+      });
+    }
+    return Promise.reject(new Error("blob data URL conversion unavailable"));
+  }
+
+  async function tryCopyPosterWithNativeBridge(blob, fileName, options = {}) {
+    const bridge = nativeClipboardBridge(options);
+    if (!bridge || typeof bridge.postMessage !== "function") return null;
+    try {
+      const dataUrl = await blobToDataUrl(blob, options);
+      const match = /^data:image\/png;base64,([a-z0-9+/=]+)$/i.exec(dataUrl);
+      if (!match) throw new Error("invalid PNG data URL");
+      const response = await bridge.postMessage({ type: PNG_TYPE, fileName, base64: match[1] });
+      if (!response || response.ok !== true) {
+        throw new Error((response && response.error) || "native clipboard copy failed");
+      }
+      logPosterEvent("poster.nativeCopy.complete", { action: "copied", fileName });
+      return { action: "copied", fileName };
+    } catch (error) {
+      logPosterEvent("poster.nativeCopy.failed", { name: error && error.name, message: error && error.message });
+      return null;
+    }
+  }
+
+  async function tryCopyPosterBlob(blob, fileName, options = {}) {
+    const clipboard = clipboardTarget(options);
+    const ClipboardItemCtor = clipboardItemConstructor(options);
+    if (!clipboard || typeof clipboard.write !== "function" || typeof ClipboardItemCtor !== "function") {
+      return null;
+    }
+    try {
+      await clipboard.write([new ClipboardItemCtor({ [PNG_TYPE]: blob })]);
+      logPosterEvent("poster.copy.complete", { action: "copied", fileName });
+      return { action: "copied", fileName };
+    } catch (error) {
+      logPosterEvent("poster.copy.failed", { name: error && error.name, message: error && error.message });
+      return null;
+    }
+  }
+
+  function canSharePosterFile(shareTarget, file) {
+    try {
+      return Boolean(shareTarget.canShare({ files: [file] }));
+    } catch (error) {
+      logPosterEvent("poster.share.unavailable", { name: error && error.name, message: error && error.message });
+      return false;
+    }
+  }
+
+  async function trySharePosterFile(shareTarget, file, fileName) {
+    try {
+      await shareTarget.share({
+        files: [file],
+        title: "AI Token Identity",
+        text: "我的 AI 修为快照",
+      });
+      logPosterEvent("poster.download.complete", { action: "shared", fileName });
+      return { action: "shared", fileName };
+    } catch (error) {
+      if (error && error.name === "AbortError") throw error;
+      logPosterEvent("poster.share.failed", { name: error && error.name, message: error && error.message, fallback: "download" });
+      return null;
+    }
+  }
+
   async function downloadSharePoster(summary, options = {}) {
     logPosterEvent("poster.download.start", {
       total: summary?.total || 0,
@@ -312,23 +820,24 @@
       rankEstimated: Boolean(fieldValue(summary, options, "rankEstimated")),
     });
     try {
-      const templateHtml = options.templateHtml || await loadPosterTemplateHtml(options.templateUrl || TEMPLATE_URL);
-      const svg = buildSharePosterSvg(summary, { ...options, templateHtml });
-      const blob = options.renderSvg ? await options.renderSvg(svg) : await svgToPngBlob(svg);
+      const blob = await renderSharePosterPngBlob(summary, options);
       const fileName = options.fileName || "opentoken-token-identity.png";
       const shareTarget = options.shareTarget || (typeof navigator === "object" ? navigator : null);
       const FileCtor = options.FileCtor || (typeof File === "function" ? File : null);
+      const avoidFileShare = shouldAvoidFileShare(options, shareTarget);
 
-      if (FileCtor && shareTarget?.canShare && shareTarget?.share) {
+      if (avoidFileShare) {
+        const nativeCopyResult = await tryCopyPosterWithNativeBridge(blob, fileName, options);
+        if (nativeCopyResult) return nativeCopyResult;
+        const copyResult = await tryCopyPosterBlob(blob, fileName, options);
+        if (copyResult) return copyResult;
+      }
+
+      if (!avoidFileShare && FileCtor && shareTarget?.canShare && shareTarget?.share) {
         const file = new FileCtor([blob], fileName, { type: PNG_TYPE });
-        if (shareTarget.canShare({ files: [file] })) {
-          await shareTarget.share({
-            files: [file],
-            title: "AI Token Identity",
-            text: "我的 AI 修为快照",
-          });
-          logPosterEvent("poster.download.complete", { action: "shared", fileName });
-          return { action: "shared", fileName };
+        if (canSharePosterFile(shareTarget, file)) {
+          const shareResult = await trySharePosterFile(shareTarget, file, fileName);
+          if (shareResult) return shareResult;
         }
       }
 
@@ -345,10 +854,12 @@
   return {
     buildSharePosterHtml,
     buildSharePosterSvg,
+    drawSharePosterCanvas,
     downloadSharePoster,
     getTokenIdentity,
     loadLogoDataUrl,
     loadPosterTemplateHtml,
+    renderSharePosterPngBlob,
     svgToPngBlob,
   };
 });

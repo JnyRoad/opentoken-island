@@ -18,6 +18,72 @@ const sampleSummary = {
   leadOverNextLabel: "8.6亿",
 };
 
+function createRecordingCanvasDocument() {
+  const calls = [];
+  const context = {
+    calls,
+    fillStyle: "",
+    strokeStyle: "",
+    font: "",
+    textAlign: "left",
+    textBaseline: "alphabetic",
+    lineWidth: 1,
+    globalAlpha: 1,
+    save() { calls.push(["save"]); },
+    restore() { calls.push(["restore"]); },
+    beginPath() { calls.push(["beginPath"]); },
+    closePath() { calls.push(["closePath"]); },
+    moveTo(x, y) { calls.push(["moveTo", x, y]); },
+    lineTo(x, y) { calls.push(["lineTo", x, y]); },
+    quadraticCurveTo(cpx, cpy, x, y) { calls.push(["quadraticCurveTo", cpx, cpy, x, y]); },
+    arc(x, y, radius, startAngle, endAngle) { calls.push(["arc", x, y, radius, startAngle, endAngle]); },
+    clearRect(x, y, width, height) { calls.push(["clearRect", x, y, width, height]); },
+    fillRect(x, y, width, height) { calls.push(["fillRect", x, y, width, height, this.fillStyle]); },
+    fill() { calls.push(["fill", this.fillStyle]); },
+    stroke() { calls.push(["stroke", this.strokeStyle, this.lineWidth]); },
+    fillText(text, x, y) { calls.push(["fillText", String(text), x, y, this.font]); },
+    measureText(text) { return { width: String(text).length * 42 }; },
+    createLinearGradient() {
+      const stops = [];
+      calls.push(["createLinearGradient", stops]);
+      return {
+        addColorStop(offset, color) {
+          stops.push([offset, color]);
+        },
+      };
+    },
+    createRadialGradient() {
+      const stops = [];
+      calls.push(["createRadialGradient", stops]);
+      return {
+        addColorStop(offset, color) {
+          stops.push([offset, color]);
+        },
+      };
+    },
+  };
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext(type) {
+      calls.push(["getContext", type]);
+      return context;
+    },
+    toBlob(callback, type) {
+      calls.push(["toBlob", type]);
+      callback({ type, size: 1234, calls });
+    },
+  };
+  const document = {
+    createElement(tagName) {
+      calls.push(["createElement", tagName]);
+      assert.equal(tagName, "canvas");
+      return canvas;
+    },
+  };
+  return { document, canvas, calls };
+}
+
 (async () => {
   assert.equal(typeof poster.buildSharePosterSvg, "function");
   assert.equal(typeof poster.buildSharePosterHtml, "function");
@@ -146,6 +212,227 @@ const sampleSummary = {
   assert.doesNotMatch(invalidTotalHtml, /NaN/);
   assert.match(invalidTotalHtml, /炼气期/);
 
+  assert.equal(typeof poster.renderSharePosterPngBlob, "function");
+  const nativeCanvas = createRecordingCanvasDocument();
+  let nativeDownloaded = null;
+  const nativeResult = await poster.downloadSharePoster(sampleSummary, {
+    templateHtml,
+    document: nativeCanvas.document,
+    renderSvg: async () => {
+      const error = new Error("foreignObject path should not run when canvas is available");
+      error.name = "SecurityError";
+      throw error;
+    },
+    downloader: (blob, fileName) => {
+      nativeDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(nativeResult.action, "download-started");
+  assert.equal(nativeCanvas.canvas.width, 1080);
+  assert.equal(nativeCanvas.canvas.height, 1920);
+  assert.deepEqual(
+    nativeCanvas.calls.filter((call) => call[0] === "toBlob").map((call) => call[1]),
+    ["image/png"]
+  );
+  assert.equal(nativeDownloaded.blob.type, "image/png");
+  const drawnText = nativeCanvas.calls
+    .filter((call) => call[0] === "fillText")
+    .map((call) => call[1]);
+  assert.ok(drawnText.includes("大乘期"));
+  assert.ok(drawnText.includes("#1"));
+  assert.ok(drawnText.includes("45亿"));
+  assert.ok(drawnText.includes("8.6亿"));
+  assert.equal(nativeDownloaded.fileName, "opentoken-token-identity.png");
+
+  let macNativeDownloaded = null;
+  let macNativeClipboardCalled = false;
+  const nativeMessages = [];
+  const macNativeCopyResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    blobToDataUrl: async () => "data:image/png;base64,cG5nLWJ5dGVz",
+    nativeClipboardBridge: {
+      postMessage(message) {
+        nativeMessages.push(message);
+        return Promise.resolve({ ok: true });
+      },
+    },
+    clipboardTarget: {
+      async write() {
+        macNativeClipboardCalled = true;
+      },
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    },
+    downloader: (blob, fileName) => {
+      macNativeDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macNativeCopyResult.action, "copied");
+  assert.equal(macNativeCopyResult.fileName, "opentoken-token-identity.png");
+  assert.equal(macNativeClipboardCalled, false);
+  assert.equal(macNativeDownloaded, null);
+  assert.deepEqual(nativeMessages, [{
+    type: "image/png",
+    fileName: "opentoken-token-identity.png",
+    base64: "cG5nLWJ5dGVz",
+  }]);
+
+  let nativeFailureDownloaded = null;
+  const nativeFailureMessages = [];
+  const nativeFailureClipboardWrites = [];
+  const nativeFailureResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    blobToDataUrl: async () => "data:image/png;base64,cG5nLWJ5dGVz",
+    nativeClipboardBridge: {
+      postMessage(message) {
+        nativeFailureMessages.push(message);
+        return Promise.resolve({ ok: false, error: "pasteboard-write-failed" });
+      },
+    },
+    ClipboardItemCtor: function TestClipboardItem(items) {
+      this.items = items;
+    },
+    clipboardTarget: {
+      async write(items) {
+        nativeFailureClipboardWrites.push(items);
+      },
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    },
+    downloader: (blob, fileName) => {
+      nativeFailureDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(nativeFailureResult.action, "copied");
+  assert.equal(nativeFailureMessages.length, 1);
+  assert.equal(nativeFailureClipboardWrites.length, 1);
+  assert.equal(nativeFailureClipboardWrites[0][0].items["image/png"].type, "image/png");
+  assert.equal(nativeFailureDownloaded, null);
+
+  let macShareCalled = false;
+  let macDownloaded = null;
+  const clipboardWrites = [];
+  const macCopyResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    ClipboardItemCtor: function TestClipboardItem(items) {
+      this.items = items;
+    },
+    clipboardTarget: {
+      async write(items) {
+        clipboardWrites.push(items);
+      },
+    },
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      canShare() {
+        return true;
+      },
+      async share() {
+        macShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      macDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macCopyResult.action, "copied");
+  assert.equal(macCopyResult.fileName, "opentoken-token-identity.png");
+  assert.equal(macShareCalled, false);
+  assert.equal(macDownloaded, null);
+  assert.equal(clipboardWrites.length, 1);
+  assert.equal(clipboardWrites[0].length, 1);
+  assert.equal(clipboardWrites[0][0].items["image/png"].type, "image/png");
+
+  let macNoClipboardShareCalled = false;
+  let macNoClipboardDownloaded = null;
+  const macNoClipboardResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      canShare() {
+        return true;
+      },
+      async share() {
+        macNoClipboardShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      macNoClipboardDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macNoClipboardResult.action, "download-started");
+  assert.equal(macNoClipboardShareCalled, false);
+  assert.equal(macNoClipboardDownloaded.blob.type, "image/png");
+  assert.equal(macNoClipboardDownloaded.fileName, "opentoken-token-identity.png");
+
+  let iphoneShareCalled = false;
+  let iphoneDownloaded = null;
+  const iphoneShareResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "iPhone",
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+      maxTouchPoints: 5,
+      canShare() {
+        return true;
+      },
+      async share() {
+        iphoneShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      iphoneDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(iphoneShareResult.action, "shared");
+  assert.equal(iphoneShareCalled, true);
+  assert.equal(iphoneDownloaded, null);
+
+  let fallbackDownloaded = null;
+  const fallbackResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      canShare() {
+        return true;
+      },
+      async share() {
+        const error = new Error("The operation is insecure.");
+        error.name = "SecurityError";
+        throw error;
+      },
+    },
+    downloader: (blob, fileName) => {
+      fallbackDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(fallbackResult.action, "download-started");
+  assert.equal(fallbackDownloaded.blob.type, "image/png");
+  assert.equal(fallbackDownloaded.fileName, "opentoken-token-identity.png");
+
   let downloaded = null;
   const result = await poster.downloadSharePoster(sampleSummary, {
     templateHtml,
@@ -168,6 +455,7 @@ const sampleSummary = {
   assert.match(popoverHtml, /const posterOptions = \{[\s\S]*rankLabel: summary\.rankLabel[\s\S]*rankDelta: summary\.rankDelta[\s\S]*gapToPreviousLabel: summary\.gapToPreviousLabel[\s\S]*leadOverNextLabel: summary\.leadOverNextLabel[\s\S]*templateUrl: '\.\/assets\/share-poster-template\.html'[\s\S]*\};/);
   assert.match(popoverHtml, /downloadSharePoster\(summary, posterOptions\)/);
   assert.match(popoverHtml, /posterErrorLabel/);
+  assert.match(popoverHtml, /Copied/);
   assert.match(popoverHtml, /Started/);
 
   console.log("share poster contract ok");

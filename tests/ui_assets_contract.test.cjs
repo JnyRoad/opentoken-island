@@ -198,6 +198,21 @@ test("native status event refreshes the open popover webview", () => {
   assert.match(swift, /evaluateJavaScript\("window\.OpenTokenIslandRefresh/);
 });
 
+test("native app exposes a single-item poster clipboard bridge", () => {
+  const swift = read("OpenTokenIsland.swift");
+  assert.match(swift, /WKScriptMessageHandlerWithReply/);
+  assert.match(swift, /WKWebViewConfiguration\(\)/);
+  assert.match(swift, /userContentController\.addScriptMessageHandler\(self,\s*contentWorld:\s*\.page,\s*name:\s*"openTokenClipboard"\)/);
+  assert.match(swift, /func userContentController\(_ userContentController: WKUserContentController,\s*didReceive message: WKScriptMessage,\s*replyHandler: @escaping \(Any\?, String\?\) -> Void\)/);
+  assert.match(swift, /message\.name == "openTokenClipboard"/);
+  assert.match(swift, /NSPasteboard\.general/);
+  assert.match(swift, /pasteboard\.clearContents\(\)/);
+  assert.match(swift, /pasteboard\.setData\(data,\s*forType:\s*\.png\)/);
+  assert.match(swift, /replyHandler\(\["ok": true\], nil\)/);
+  assert.match(swift, /replyHandler\(nil, "pasteboard-write-failed"\)/);
+  assert.doesNotMatch(swift, /pasteboard\.writeObjects\(\[.*URL/);
+});
+
 test("native upload-captured events refresh without forcing an island popup", () => {
   const swift = read("OpenTokenIsland.swift");
   assert.match(swift, /let showIsland = event\["showIsland"\] as\? Bool \?\? true/);
