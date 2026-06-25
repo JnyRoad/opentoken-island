@@ -203,6 +203,7 @@ test("native app exposes a single-item poster clipboard bridge", () => {
   assert.match(swift, /WKScriptMessageHandlerWithReply/);
   assert.match(swift, /WKWebViewConfiguration\(\)/);
   assert.match(swift, /userContentController\.addScriptMessageHandler\(self,\s*contentWorld:\s*\.page,\s*name:\s*"openTokenClipboard"\)/);
+  assert.match(swift, /userContentController\.addScriptMessageHandler\(self,\s*contentWorld:\s*\.page,\s*name:\s*"openTokenPosterSnapshot"\)/);
   assert.match(swift, /func userContentController\(_ userContentController: WKUserContentController,\s*didReceive message: WKScriptMessage,\s*replyHandler: @escaping \(Any\?, String\?\) -> Void\)/);
   assert.match(swift, /message\.name == "openTokenClipboard"/);
   assert.match(swift, /NSPasteboard\.general/);
@@ -211,6 +212,21 @@ test("native app exposes a single-item poster clipboard bridge", () => {
   assert.match(swift, /replyHandler\(\["ok": true\], nil\)/);
   assert.match(swift, /replyHandler\(nil, "pasteboard-write-failed"\)/);
   assert.doesNotMatch(swift, /pasteboard\.writeObjects\(\[.*URL/);
+});
+
+test("native app renders poster HTML snapshots at fixed export size", () => {
+  const swift = read("OpenTokenIsland.swift");
+  assert.match(swift, /private var posterSnapshotJobs = \[PosterSnapshotJob\]\(\)/);
+  assert.match(swift, /message\.name == "openTokenPosterSnapshot"/);
+  assert.match(swift, /PosterSnapshotJob\(/);
+  assert.match(swift, /WKWebView\(frame: NSRect\(x: 0, y: 0, width: width, height: height\)/);
+  assert.match(swift, /webView\.loadHTMLString\(html, baseURL: Bundle\.main\.resourceURL\)/);
+  assert.match(swift, /WKSnapshotConfiguration\(\)/);
+  assert.match(swift, /snapshotConfig\.snapshotWidth = NSNumber\(value: Int\(width\)\)/);
+  assert.match(swift, /webView\.takeSnapshot\(with: snapshotConfig\)/);
+  assert.match(swift, /representation\(using: \.png/);
+  assert.match(swift, /base64EncodedString\(\)/);
+  assert.match(swift, /replyHandler\(\["ok": true, "type": "image\/png", "base64": base64\], nil\)/);
 });
 
 test("native upload-captured events refresh without forcing an island popup", () => {

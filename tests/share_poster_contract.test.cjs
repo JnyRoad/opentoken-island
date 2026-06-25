@@ -87,6 +87,7 @@ function createRecordingCanvasDocument() {
 (async () => {
   assert.equal(typeof poster.buildSharePosterSvg, "function");
   assert.equal(typeof poster.buildSharePosterHtml, "function");
+  assert.equal(typeof poster.buildSharePosterExportHtml, "function");
   assert.equal(typeof poster.downloadSharePoster, "function");
   assert.equal(typeof poster.getTokenIdentity, "function");
 
@@ -130,6 +131,20 @@ function createRecordingCanvasDocument() {
   assert.doesNotMatch(generatedHtml, /{{[A-Z0-9_]+}}/);
   assert.doesNotMatch(generatedHtml, /超过[\s\S]*78%/);
   assert.doesNotMatch(generatedHtml, /航海|航海家/);
+
+  const exportHtml = poster.buildSharePosterExportHtml(sampleSummary, {
+    templateHtml,
+  });
+  assert.match(exportHtml, /^<!doctype html>/);
+  assert.match(exportHtml, /<html lang="zh-CN">/);
+  assert.match(exportHtml, /<div class="poster">/);
+  assert.match(exportHtml, /width:1080px; height:1920px/);
+  assert.match(exportHtml, /<h1 class="title">大乘期<span class="accent"><\/span><\/h1>/);
+  assert.match(exportHtml, /#1/);
+  assert.match(exportHtml, /45亿/);
+  assert.doesNotMatch(exportHtml, /class="stage"/);
+  assert.doesNotMatch(exportHtml, /class="fit"/);
+  assert.doesNotMatch(exportHtml, /{{[A-Z0-9_]+}}/);
 
   const svg = poster.buildSharePosterSvg(sampleSummary, {
     templateHtml,
@@ -243,6 +258,38 @@ function createRecordingCanvasDocument() {
   assert.ok(drawnText.includes("45亿"));
   assert.ok(drawnText.includes("8.6亿"));
   assert.equal(nativeDownloaded.fileName, "opentoken-token-identity.png");
+
+  const snapshotMessages = [];
+  let snapshotCanvasTouched = false;
+  const snapshotBlob = await poster.renderSharePosterPngBlob(sampleSummary, {
+    templateHtml,
+    document: {
+      createElement() {
+        snapshotCanvasTouched = true;
+        throw new Error("native snapshot should run before canvas fallback");
+      },
+    },
+    BlobCtor: function TestBlob(parts, options) {
+      this.parts = parts;
+      this.type = options.type;
+    },
+    nativeSnapshotBridge: {
+      postMessage(message) {
+        snapshotMessages.push(message);
+        return Promise.resolve({ ok: true, type: "image/png", base64: "cG5nLWJ5dGVz" });
+      },
+    },
+  });
+  assert.equal(snapshotBlob.type, "image/png");
+  assert.equal(snapshotCanvasTouched, false);
+  assert.equal(snapshotMessages.length, 1);
+  assert.equal(snapshotMessages[0].width, 1080);
+  assert.equal(snapshotMessages[0].height, 1920);
+  assert.equal(snapshotMessages[0].type, "text/html");
+  assert.match(snapshotMessages[0].html, /<div class="poster">/);
+  assert.match(snapshotMessages[0].html, /大乘期/);
+  assert.doesNotMatch(snapshotMessages[0].html, /class="stage"/);
+  assert.doesNotMatch(snapshotMessages[0].html, /class="fit"/);
 
   let macNativeDownloaded = null;
   let macNativeClipboardCalled = false;
