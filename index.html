@@ -1308,9 +1308,9 @@
       const rank = data.rank || 17;
       const total = data.total || 0;
       const totalLabel = data.totalLabel || "0";
-      const xp = Math.min(data.xp || 0, data.xpMax || 4800);
-      const xpMax = data.xpMax || 4800;
-      const questGoal = 300000;
+      const xp = Math.min(data.xp || 0, data.xpMax || 300_000_000);
+      const xpMax = data.xpMax || 300_000_000;
+      const questGoal = xpMax;
       const questGap = Math.max(0, questGoal - total);
 
       menuValue.textContent = totalLabel;

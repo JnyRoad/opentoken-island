@@ -85,7 +85,7 @@
       try {
         const response = await fetch('/api/summary');
         const data = await response.json();
-      if (!data.ok) return;
+        if (!data.ok) return;
       const game = data.game || {};
       const report = data.report || {};
       // 战报左侧图标随类型变化（lucide）；report 缺失时回退到默认 award 图标。

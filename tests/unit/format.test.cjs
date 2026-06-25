@@ -25,3 +25,7 @@ test("toolIcon maps known and falls back to terminal", () => {
   assert.equal(toolIcon("codex"), "zap");
   assert.equal(toolIcon("whatever"), "terminal");
 });
+test("formatCount returns 0 for negative values", () => {
+  assert.equal(formatCount(-1), "0");
+  assert.equal(formatCount(-100_000), "0");
+});

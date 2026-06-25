@@ -552,6 +552,7 @@ async function handleUploadProxy(req, res, url) {
     status: upstream.status,
     ok: upstream.ok,
     accepted: upstream.json?.accepted ?? null,
+    error: upstream.error || "",
   });
 
   if (upstream.ok && summary.total > 0 && isCurrentUpload(state, uploadId)) {
@@ -686,7 +687,7 @@ async function handleApi(req, res, url) {
     logIslandEvent(payload.event.slice(0, 120), {
       flow: String(payload.flow || "client.event").slice(0, 120),
       clientLayer: String(payload.layer || "client").slice(0, 80),
-      ...(payload.details && typeof payload.details === "object" ? payload.details : {}),
+      clientDetails: payload.details && typeof payload.details === "object" ? payload.details : {},
     });
     return json(req, res, 200, { ok: true });
   }
