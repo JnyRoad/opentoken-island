@@ -111,13 +111,17 @@ test("popover labels estimated ranks instead of treating them as confirmed", () 
   assert.match(html, /等待官网确认/);
 });
 
-test("popover uses clear Chinese status labels instead of gamified badge jargon", () => {
+test("popover removes the redundant bottom badge grid", () => {
   const html = read("popover.html");
   assert.match(html, /今日进度/);
-  assert.match(html, /总榜排名/);
+  assert.match(html, /今日总榜/);
   assert.match(html, /今日目标/);
-  assert.match(html, /主力工具/);
   assert.match(html, /上传状态/);
+  assert.doesNotMatch(html, /class="badges"/);
+  assert.doesNotMatch(html, /\.badges\{/);
+  assert.doesNotMatch(html, /class="badge/);
+  assert.doesNotMatch(html, /renderBadges/);
+  assert.doesNotMatch(html, />主力工具</);
   assert.doesNotMatch(html, /Builder Lv|High Output|King Mode|Codex Main|Rank Climber|Hot Streak|Late Builder|>done</);
 });
 
