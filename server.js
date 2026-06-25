@@ -8,7 +8,11 @@ const { execFile } = require("child_process");
 const { appendEventLog } = require("./lib/event-log");
 const { rowsFromPayload, summarizeRows, computeLeaderboard, buildSummary } = require("./lib/summary");
 const { buildBattleReport } = require("./lib/island-report");
-const { buildLeaderboardEndpoint, LEADERBOARD_ENTRY_LIMIT } = require("./lib/leaderboard-endpoint");
+const {
+  buildLeaderboardEndpoint,
+  LEADERBOARD_ENTRY_LIMIT,
+  LEADERBOARD_RANK_ONLY_LIMIT,
+} = require("./lib/leaderboard-endpoint");
 const {
   corsHeaders: localCorsHeaders,
   requireTrustedOrigin: requireLocalTrustedOrigin,
@@ -335,17 +339,66 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function leaderboardEntries(result) {
+  return Array.isArray(result?.json?.entries) ? result.json.entries : [];
+}
+
+function confirmedMyRank(myRank, summary) {
+  const score = Number(summary?.total || 0);
+  const myRankScore = Number(myRank?.score || 0);
+  const rank = Number(myRank?.rank || 0);
+  if (score <= 0 || myRankScore !== score) return 0;
+  return Number.isFinite(rank) && rank > 0 ? rank : 0;
+}
+
+function leaderboardWindowContainsOwn(entries, ownRank, userId, summary) {
+  const confirmedUserId = String(userId || "").trim();
+  const score = Number(summary?.total || 0);
+  return entries.some((entry) => {
+    if (Number(entry.score || 0) !== score) return false;
+    const entryUserId = String(entry.userId || "").trim();
+    if (confirmedUserId && entryUserId) return entryUserId === confirmedUserId;
+    return ownRank > 0 && Number(entry.rank || 0) === ownRank;
+  });
+}
+
+async function requestLeaderboard(userId, limit) {
+  const endpoint = buildLeaderboardEndpoint(userId, { limit });
+  return requestText("GET", endpoint, "", { accept: "application/json" });
+}
+
 async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
-  const endpoint = buildLeaderboardEndpoint(state.userId);
   let lastResult = null;
 
   for (let attempt = 0; attempt < LEADERBOARD_MAX_ATTEMPTS; attempt += 1) {
-    const result = await requestText("GET", endpoint, "", { accept: "application/json" });
+    const confirmedUserId = String(state.userId || "").trim();
+    let result = confirmedUserId
+      ? await requestLeaderboard(confirmedUserId, LEADERBOARD_RANK_ONLY_LIMIT)
+      : null;
     lastResult = result;
-    const entries = Array.isArray(result.json?.entries) ? result.json.entries : [];
+    let entries = [];
+    let myRank = result?.json?.myRank;
+    const ownRank = confirmedMyRank(myRank, summary);
+
+    if (!confirmedUserId || ownRank === 0 || ownRank <= LEADERBOARD_ENTRY_LIMIT) {
+      result = await requestLeaderboard(confirmedUserId, LEADERBOARD_ENTRY_LIMIT);
+      lastResult = result;
+      entries = leaderboardEntries(result);
+      const fullMyRank = result.json?.myRank;
+      const fullOwnRank = confirmedMyRank(fullMyRank, summary) || ownRank;
+      const fullWindowHasOwn = !confirmedUserId
+        || leaderboardWindowContainsOwn(entries, fullOwnRank, confirmedUserId, summary);
+      if (!entries.length || !fullWindowHasOwn) {
+        entries = [];
+        myRank = null;
+      } else {
+        myRank = fullMyRank || (ownRank > 0 ? myRank : null);
+      }
+    }
+
     const board = computeLeaderboard(entries, summary, previousRank, state.userId, {
       limit: LEADERBOARD_ENTRY_LIMIT,
-      myRank: result.json?.myRank,
+      myRank,
     });
 
     if (board) {
@@ -364,7 +417,7 @@ async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
     board: "total",
     range: "today",
     uploadId,
-    entriesCount: Array.isArray(lastResult?.json?.entries) ? lastResult.json.entries.length : 0,
+    entriesCount: leaderboardEntries(lastResult).length,
     error: lastResult?.error || "Current upload was not found in leaderboard yet",
   };
   if (!applyLeaderboardForUpload(state, { uploadId, leaderboard })) return null;

@@ -168,6 +168,26 @@ test("computeLeaderboard confirms rank from validated myRank when own entry is o
   assert.equal(board.next.userId, "below");
 });
 
+test("computeLeaderboard does not treat non-adjacent entries as rank neighbors", () => {
+  const entries = [
+    { userId: "leader", rank: 1, score: 1000, name: "Leader", byTool: { codex: 1000 } },
+    { userId: "6466517", rank: 114, score: 100, name: "You", byTool: { codex: 100 } },
+  ];
+  const board = computeLeaderboard(entries, {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    myRank: { rank: 114, score: 100 },
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 114);
+  assert.equal(board.previous, null);
+  assert.equal(board.next, null);
+  assert.equal(board.gapToPrevious, null);
+  assert.equal(board.leadOverNext, null);
+});
+
 test("computeLeaderboard derives neighbors for myRank after the first 100 entries", () => {
   const entries = Array.from({ length: 200 }, (_, index) => ({
     userId: `u${index + 1}`,
