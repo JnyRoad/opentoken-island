@@ -65,6 +65,25 @@ test("native status menu uses short recovery actions without logs or island item
   assert.doesNotMatch(setupStatusItem, /Show Island|Open Logs|Quit OpenToken Island|Open Browser UI|显示悬浮岛|打开日志/);
 });
 
+test("native status item routes right click through the status button action", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const setupStatusItem = swift.slice(
+    swift.indexOf("private func setupStatusItem()"),
+    swift.indexOf("private func setupPopover()")
+  );
+  const handleClick = swift.slice(
+    swift.indexOf("@objc private func handleStatusItemClick()"),
+    swift.indexOf("private func showPopover()")
+  );
+
+  assert.match(setupStatusItem, /button\.action = #selector\(handleStatusItemClick\)/);
+  assert.match(setupStatusItem, /button\.sendAction\(on: \[\.leftMouseUp, \.rightMouseUp\]\)/);
+  assert.doesNotMatch(setupStatusItem, /NSClickGestureRecognizer|buttonMask|addGestureRecognizer/);
+  assert.match(handleClick, /NSApp\.currentEvent\?\.type == \.rightMouseUp/);
+  assert.match(handleClick, /showContextMenu\(\)/);
+  assert.match(handleClick, /togglePopover\(\)/);
+});
+
 test("native menu can restart the local server without showing the island", () => {
   const swift = read("OpenTokenIsland.swift");
   const restartServerNow = swift.slice(
