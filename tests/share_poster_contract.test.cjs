@@ -18,6 +18,72 @@ const sampleSummary = {
   leadOverNextLabel: "8.6亿",
 };
 
+function createRecordingCanvasDocument() {
+  const calls = [];
+  const context = {
+    calls,
+    fillStyle: "",
+    strokeStyle: "",
+    font: "",
+    textAlign: "left",
+    textBaseline: "alphabetic",
+    lineWidth: 1,
+    globalAlpha: 1,
+    save() { calls.push(["save"]); },
+    restore() { calls.push(["restore"]); },
+    beginPath() { calls.push(["beginPath"]); },
+    closePath() { calls.push(["closePath"]); },
+    moveTo(x, y) { calls.push(["moveTo", x, y]); },
+    lineTo(x, y) { calls.push(["lineTo", x, y]); },
+    quadraticCurveTo(cpx, cpy, x, y) { calls.push(["quadraticCurveTo", cpx, cpy, x, y]); },
+    arc(x, y, radius, startAngle, endAngle) { calls.push(["arc", x, y, radius, startAngle, endAngle]); },
+    clearRect(x, y, width, height) { calls.push(["clearRect", x, y, width, height]); },
+    fillRect(x, y, width, height) { calls.push(["fillRect", x, y, width, height, this.fillStyle]); },
+    fill() { calls.push(["fill", this.fillStyle]); },
+    stroke() { calls.push(["stroke", this.strokeStyle, this.lineWidth]); },
+    fillText(text, x, y) { calls.push(["fillText", String(text), x, y, this.font]); },
+    measureText(text) { return { width: String(text).length * 42 }; },
+    createLinearGradient() {
+      const stops = [];
+      calls.push(["createLinearGradient", stops]);
+      return {
+        addColorStop(offset, color) {
+          stops.push([offset, color]);
+        },
+      };
+    },
+    createRadialGradient() {
+      const stops = [];
+      calls.push(["createRadialGradient", stops]);
+      return {
+        addColorStop(offset, color) {
+          stops.push([offset, color]);
+        },
+      };
+    },
+  };
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext(type) {
+      calls.push(["getContext", type]);
+      return context;
+    },
+    toBlob(callback, type) {
+      calls.push(["toBlob", type]);
+      callback({ type, size: 1234, calls });
+    },
+  };
+  const document = {
+    createElement(tagName) {
+      calls.push(["createElement", tagName]);
+      assert.equal(tagName, "canvas");
+      return canvas;
+    },
+  };
+  return { document, canvas, calls };
+}
+
 (async () => {
   assert.equal(typeof poster.buildSharePosterSvg, "function");
   assert.equal(typeof poster.buildSharePosterHtml, "function");
@@ -145,6 +211,64 @@ const sampleSummary = {
   });
   assert.doesNotMatch(invalidTotalHtml, /NaN/);
   assert.match(invalidTotalHtml, /炼气期/);
+
+  assert.equal(typeof poster.renderSharePosterPngBlob, "function");
+  const nativeCanvas = createRecordingCanvasDocument();
+  let nativeDownloaded = null;
+  const nativeResult = await poster.downloadSharePoster(sampleSummary, {
+    templateHtml,
+    document: nativeCanvas.document,
+    renderSvg: async () => {
+      const error = new Error("foreignObject path should not run when canvas is available");
+      error.name = "SecurityError";
+      throw error;
+    },
+    downloader: (blob, fileName) => {
+      nativeDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(nativeResult.action, "download-started");
+  assert.equal(nativeCanvas.canvas.width, 1080);
+  assert.equal(nativeCanvas.canvas.height, 1920);
+  assert.deepEqual(
+    nativeCanvas.calls.filter((call) => call[0] === "toBlob").map((call) => call[1]),
+    ["image/png"]
+  );
+  assert.equal(nativeDownloaded.blob.type, "image/png");
+  const drawnText = nativeCanvas.calls
+    .filter((call) => call[0] === "fillText")
+    .map((call) => call[1]);
+  assert.ok(drawnText.includes("大乘期"));
+  assert.ok(drawnText.includes("#1"));
+  assert.ok(drawnText.includes("45亿"));
+  assert.ok(drawnText.includes("8.6亿"));
+  assert.equal(nativeDownloaded.fileName, "opentoken-token-identity.png");
+
+  let fallbackDownloaded = null;
+  const fallbackResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      canShare() {
+        return true;
+      },
+      async share() {
+        const error = new Error("The operation is insecure.");
+        error.name = "SecurityError";
+        throw error;
+      },
+    },
+    downloader: (blob, fileName) => {
+      fallbackDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(fallbackResult.action, "download-started");
+  assert.equal(fallbackDownloaded.blob.type, "image/png");
+  assert.equal(fallbackDownloaded.fileName, "opentoken-token-identity.png");
 
   let downloaded = null;
   const result = await poster.downloadSharePoster(sampleSummary, {
