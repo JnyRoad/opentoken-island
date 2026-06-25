@@ -695,6 +695,45 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function isMacPlatform(shareTarget) {
+    const target = shareTarget || (root && root.navigator) || {};
+    const platform = `${target.platform || ""}`;
+    const userAgent = `${target.userAgent || ""}`;
+    const touchPoints = Number(target.maxTouchPoints || 0);
+    if (/(iPhone|iPad|iPod)/i.test(`${platform} ${userAgent}`)) return false;
+    if (/Mac/i.test(platform)) return touchPoints === 0;
+    return /Macintosh|Mac OS X/i.test(userAgent) && touchPoints === 0;
+  }
+
+  function shouldAvoidFileShare(options, shareTarget) {
+    if (typeof options.avoidFileShare === "boolean") return options.avoidFileShare;
+    return isMacPlatform(shareTarget);
+  }
+
+  function clipboardTarget(options = {}) {
+    return options.clipboardTarget || (root && root.navigator && root.navigator.clipboard) || null;
+  }
+
+  function clipboardItemConstructor(options = {}) {
+    return options.ClipboardItemCtor || (root && root.ClipboardItem) || null;
+  }
+
+  async function tryCopyPosterBlob(blob, fileName, options = {}) {
+    const clipboard = clipboardTarget(options);
+    const ClipboardItemCtor = clipboardItemConstructor(options);
+    if (!clipboard || typeof clipboard.write !== "function" || typeof ClipboardItemCtor !== "function") {
+      return null;
+    }
+    try {
+      await clipboard.write([new ClipboardItemCtor({ [PNG_TYPE]: blob })]);
+      logPosterEvent("poster.copy.complete", { action: "copied", fileName });
+      return { action: "copied", fileName };
+    } catch (error) {
+      logPosterEvent("poster.copy.failed", { name: error && error.name, message: error && error.message });
+      return null;
+    }
+  }
+
   function canSharePosterFile(shareTarget, file) {
     try {
       return Boolean(shareTarget.canShare({ files: [file] }));
@@ -731,8 +770,14 @@
       const fileName = options.fileName || "opentoken-token-identity.png";
       const shareTarget = options.shareTarget || (typeof navigator === "object" ? navigator : null);
       const FileCtor = options.FileCtor || (typeof File === "function" ? File : null);
+      const avoidFileShare = shouldAvoidFileShare(options, shareTarget);
 
-      if (FileCtor && shareTarget?.canShare && shareTarget?.share) {
+      if (avoidFileShare) {
+        const copyResult = await tryCopyPosterBlob(blob, fileName, options);
+        if (copyResult) return copyResult;
+      }
+
+      if (!avoidFileShare && FileCtor && shareTarget?.canShare && shareTarget?.share) {
         const file = new FileCtor([blob], fileName, { type: PNG_TYPE });
         if (canSharePosterFile(shareTarget, file)) {
           const shareResult = await trySharePosterFile(shareTarget, file, fileName);

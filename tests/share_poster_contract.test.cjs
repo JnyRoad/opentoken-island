@@ -244,6 +244,100 @@ function createRecordingCanvasDocument() {
   assert.ok(drawnText.includes("8.6亿"));
   assert.equal(nativeDownloaded.fileName, "opentoken-token-identity.png");
 
+  let macShareCalled = false;
+  let macDownloaded = null;
+  const clipboardWrites = [];
+  const macCopyResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    ClipboardItemCtor: function TestClipboardItem(items) {
+      this.items = items;
+    },
+    clipboardTarget: {
+      async write(items) {
+        clipboardWrites.push(items);
+      },
+    },
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      canShare() {
+        return true;
+      },
+      async share() {
+        macShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      macDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macCopyResult.action, "copied");
+  assert.equal(macCopyResult.fileName, "opentoken-token-identity.png");
+  assert.equal(macShareCalled, false);
+  assert.equal(macDownloaded, null);
+  assert.equal(clipboardWrites.length, 1);
+  assert.equal(clipboardWrites[0].length, 1);
+  assert.equal(clipboardWrites[0][0].items["image/png"].type, "image/png");
+
+  let macNoClipboardShareCalled = false;
+  let macNoClipboardDownloaded = null;
+  const macNoClipboardResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "MacIntel",
+      canShare() {
+        return true;
+      },
+      async share() {
+        macNoClipboardShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      macNoClipboardDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(macNoClipboardResult.action, "download-started");
+  assert.equal(macNoClipboardShareCalled, false);
+  assert.equal(macNoClipboardDownloaded.blob.type, "image/png");
+  assert.equal(macNoClipboardDownloaded.fileName, "opentoken-token-identity.png");
+
+  let iphoneShareCalled = false;
+  let iphoneDownloaded = null;
+  const iphoneShareResult = await poster.downloadSharePoster(sampleSummary, {
+    renderCanvas: async () => ({ type: "image/png" }),
+    FileCtor: function TestFile(parts, fileName, options) {
+      this.parts = parts;
+      this.name = fileName;
+      this.type = options.type;
+    },
+    shareTarget: {
+      platform: "iPhone",
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+      maxTouchPoints: 5,
+      canShare() {
+        return true;
+      },
+      async share() {
+        iphoneShareCalled = true;
+      },
+    },
+    downloader: (blob, fileName) => {
+      iphoneDownloaded = { blob, fileName };
+    },
+  });
+  assert.equal(iphoneShareResult.action, "shared");
+  assert.equal(iphoneShareCalled, true);
+  assert.equal(iphoneDownloaded, null);
+
   let fallbackDownloaded = null;
   const fallbackResult = await poster.downloadSharePoster(sampleSummary, {
     renderCanvas: async () => ({ type: "image/png" }),
@@ -292,6 +386,7 @@ function createRecordingCanvasDocument() {
   assert.match(popoverHtml, /const posterOptions = \{[\s\S]*rankLabel: summary\.rankLabel[\s\S]*rankDelta: summary\.rankDelta[\s\S]*gapToPreviousLabel: summary\.gapToPreviousLabel[\s\S]*leadOverNextLabel: summary\.leadOverNextLabel[\s\S]*templateUrl: '\.\/assets\/share-poster-template\.html'[\s\S]*\};/);
   assert.match(popoverHtml, /downloadSharePoster\(summary, posterOptions\)/);
   assert.match(popoverHtml, /posterErrorLabel/);
+  assert.match(popoverHtml, /Copied/);
   assert.match(popoverHtml, /Started/);
 
   console.log("share poster contract ok");
