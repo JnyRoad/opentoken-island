@@ -53,8 +53,8 @@ test("toolsFromMap caps at 6 and floors pct at 4", () => {
 
 test("findOwnEntry prefers userId among entries that match the current score and tools", () => {
   const entries = [
-    { userId: "u1", score: 100, byTool: { codex: 100 } },
-    { userId: "u2", score: 200, byTool: { codex: 200 } },
+    { userId: "u1", rank: 1, score: 100, byTool: { codex: 100 } },
+    { userId: "u2", rank: 2, score: 200, byTool: { codex: 200 } },
   ];
   assert.equal(findOwnEntry(entries, { total: 200, byTool: { codex: 200 } }, "u2").userId, "u2");
   assert.equal(findOwnEntry(entries, { total: 999, byTool: {} }, "u2"), null);
@@ -64,8 +64,8 @@ test("findOwnEntry prefers userId among entries that match the current score and
 
 test("findOwnEntry matches leaderboard raw score and tool breakdown", () => {
   const entries = [
-    { userId: "u1", score: 100, byTool: { codex: 90, "claude-code": 10 } },
-    { userId: "u2", score: 938_786_946, byTool: { codex: 601_085_857, "claude-code": 337_701_089 } },
+    { userId: "u1", rank: 1, score: 100, byTool: { codex: 90, "claude-code": 10 } },
+    { userId: "u2", rank: 2, score: 938_786_946, byTool: { codex: 601_085_857, "claude-code": 337_701_089 } },
   ];
   const own = findOwnEntry(entries, {
     total: 938_786_946,
@@ -166,6 +166,122 @@ test("computeLeaderboard confirms rank from validated myRank when own entry is o
   assert.equal(board.own.estimated, undefined);
   assert.equal(board.previous.userId, "above");
   assert.equal(board.next.userId, "below");
+});
+
+test("computeLeaderboard can trust a higher myRank score when the caller opts in", () => {
+  const board = computeLeaderboard([], {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    myRank: { rank: 250, score: 120 },
+    allowHigherMyRankScore: true,
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.userId, "6466517");
+  assert.equal(board.own.rank, 250);
+  assert.equal(board.own.score, 120);
+  assert.equal(board.previous, null);
+  assert.equal(board.next, null);
+});
+
+test("computeLeaderboard can trust a higher userId-matched leaderboard entry when the caller opts in", () => {
+  const entries = [
+    { userId: "member-94", rank: 94, score: 130, byTool: { codex: 130 } },
+    { userId: "6466517", rank: 95, score: 120, byTool: { codex: 100, "claude-code": 20 } },
+    { userId: "member-96", rank: 96, score: 110, byTool: { codex: 110 } },
+  ];
+  const board = computeLeaderboard(entries, {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    allowHigherUserIdScore: true,
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 95);
+  assert.equal(board.own.score, 120);
+  assert.equal(board.previous.rank, 94);
+  assert.equal(board.next.rank, 96);
+});
+
+test("computeLeaderboard rejects non-finite myRank scores", () => {
+  const board = computeLeaderboard([], {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    myRank: { rank: 95, score: Infinity },
+    allowHigherMyRankScore: true,
+  });
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard rejects non-finite ranks in user-matched entries", () => {
+  const board = computeLeaderboard([
+    { userId: "6466517", rank: "Infinity", score: 120, byTool: { codex: 120 } },
+  ], {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "6466517", {
+    allowHigherUserIdScore: true,
+  });
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard rejects non-finite scores in estimated entries", () => {
+  const board = computeLeaderboard([
+    { userId: "bad", rank: 1, score: "Infinity", byTool: { codex: 999 } },
+  ], {
+    total: 100,
+    byTool: { codex: 100 },
+  }, null, "");
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard rejects non-finite summary totals", () => {
+  const board = computeLeaderboard([
+    { userId: "leader", rank: 1, score: 300, byTool: { codex: 300 } },
+    { userId: "next", rank: 2, score: 100, byTool: { codex: 100 } },
+  ], {
+    total: Infinity,
+    byTool: { codex: Infinity },
+  }, null, "");
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard rejects matched entries without ranks", () => {
+  const board = computeLeaderboard([
+    { userId: "6466517", score: 120, byTool: { codex: 120 } },
+  ], {
+    total: 120,
+    byTool: { codex: 120 },
+  }, null, "6466517", {
+    allowHigherUserIdScore: true,
+  });
+
+  assert.equal(board, null);
+});
+
+test("computeLeaderboard ignores non-finite scores in rank neighbors", () => {
+  const board = computeLeaderboard([
+    { userId: "previous", rank: 1, score: "Infinity", byTool: { codex: 999 } },
+    { userId: "6466517", rank: 2, score: 120, byTool: { codex: 120 } },
+    { userId: "next", rank: 3, score: "NaN", byTool: { codex: 1 } },
+  ], {
+    total: 120,
+    byTool: { codex: 120 },
+  }, null, "6466517");
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 2);
+  assert.equal(board.previous, null);
+  assert.equal(board.next, null);
+  assert.equal(board.gapToPrevious, null);
+  assert.equal(board.leadOverNext, null);
 });
 
 test("computeLeaderboard does not treat non-adjacent entries as rank neighbors", () => {
