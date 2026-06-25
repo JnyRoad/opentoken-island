@@ -168,6 +168,29 @@ test("computeLeaderboard confirms rank from validated myRank when own entry is o
   assert.equal(board.next.userId, "below");
 });
 
+test("computeLeaderboard derives neighbors for myRank after the first 100 entries", () => {
+  const entries = Array.from({ length: 200 }, (_, index) => ({
+    userId: `u${index + 1}`,
+    rank: index + 1,
+    score: 300_000_000 - index * 1_000_000,
+    name: `User ${index + 1}`,
+  }));
+  const board = computeLeaderboard(entries, {
+    total: 187_000_000,
+    byTool: { codex: 187_000_000 },
+  }, null, "6466517", {
+    limit: 200,
+    myRank: { rank: 114, score: 187_000_000 },
+  });
+
+  assert.equal(board.estimated, false);
+  assert.equal(board.own.rank, 114);
+  assert.equal(board.previous.rank, 113);
+  assert.equal(board.next.rank, 115);
+  assert.equal(board.gapToPrevious, 1_000_001);
+  assert.equal(board.leadOverNext, 1_000_000);
+});
+
 test("computeLeaderboard prefers validated myRank over same-score entry with another user id", () => {
   const entries = [
     { userId: "collision", rank: 8, score: 450, name: "Collision", byTool: { codex: 450 } },
@@ -216,7 +239,8 @@ test("computeLeaderboard does not borrow top entry as next when myRank is outsid
   assert.equal(board.own.rank, 250);
   assert.equal(board.previous, null);
   assert.equal(board.next, null);
-  assert.equal(board.leadOverNext, 0);
+  assert.equal(board.gapToPrevious, null);
+  assert.equal(board.leadOverNext, null);
 });
 
 test("computeLeaderboard does not confirm a stale cached user id when score changed", () => {
@@ -378,4 +402,31 @@ test("buildSummary uses leaderboard source when own present", () => {
   assert.equal(s.rank, 2);
   assert.equal(s.total, 200);
   assert.equal(s.upstream.accepted, 1);
+});
+
+test("buildSummary labels unknown leaderboard gaps as unavailable instead of zero", () => {
+  const s = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: { date: "2026-06-25", total: 100, byTool: { codex: 100 } },
+      upstream: { json: { accepted: 1 }, status: 200 },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      own: { rank: 250, score: 100, byTool: { codex: 100 } },
+      previous: null,
+      next: null,
+      gapToPrevious: null,
+      leadOverNext: null,
+      rankDelta: 0,
+      updatedAt: "t",
+    },
+  });
+
+  assert.equal(s.source, "leaderboard");
+  assert.equal(s.rankLabel, "#250");
+  assert.equal(s.gapToPrevious, null);
+  assert.equal(s.gapToPreviousLabel, "--");
+  assert.equal(s.leadOverNext, null);
+  assert.equal(s.leadOverNextLabel, "--");
 });
