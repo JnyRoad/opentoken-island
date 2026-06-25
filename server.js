@@ -685,9 +685,9 @@ async function handleApi(req, res, url) {
       return json(req, res, 400, { ok: false, error: "Invalid client event" });
     }
     logIslandEvent(payload.event.slice(0, 120), {
+      ...(payload.details && typeof payload.details === "object" ? payload.details : {}),
       flow: String(payload.flow || "client.event").slice(0, 120),
       clientLayer: String(payload.layer || "client").slice(0, 80),
-      clientDetails: payload.details && typeof payload.details === "object" ? payload.details : {},
     });
     return json(req, res, 200, { ok: true });
   }

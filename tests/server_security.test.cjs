@@ -1487,6 +1487,14 @@ test("capturing a new upload stops serving a stale leaderboard snapshot", async 
   await upload;
 });
 
+test("static file server sets x-content-type-options and x-frame-options", async (t) => {
+  const { port } = await startIslandServer(t);
+  const response = await request(port, { path: "/island.html" });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers["x-content-type-options"], "nosniff");
+  assert.equal(response.headers["x-frame-options"], "DENY");
+});
+
 test("upload proxy rejects oversized request bodies", async (t) => {
   const upstream = await startFakeUpstream(t);
   const home = tempDir("home");
