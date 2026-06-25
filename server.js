@@ -347,15 +347,27 @@ function confirmedMyRank(myRank, summary) {
   const score = Number(summary?.total || 0);
   const myRankScore = Number(myRank?.score || 0);
   const rank = Number(myRank?.rank || 0);
-  if (score <= 0 || myRankScore !== score) return 0;
-  return Number.isFinite(rank) && rank > 0 ? rank : 0;
+  if (
+    !Number.isFinite(score)
+    || !Number.isFinite(myRankScore)
+    || !Number.isFinite(rank)
+    || score <= 0
+    || myRankScore < score
+    || rank <= 0
+  ) {
+    return 0;
+  }
+  return rank;
 }
 
 function leaderboardWindowContainsOwn(entries, ownRank, userId, summary) {
   const confirmedUserId = String(userId || "").trim();
   const score = Number(summary?.total || 0);
   return entries.some((entry) => {
-    if (Number(entry.score || 0) !== score) return false;
+    const entryScore = Number(entry.score || 0);
+    const entryRank = Number(entry.rank || 0);
+    if (!Number.isFinite(score) || !Number.isFinite(entryScore) || score <= 0 || entryScore < score) return false;
+    if (!Number.isFinite(entryRank) || entryRank <= 0) return false;
     const entryUserId = String(entry.userId || "").trim();
     if (confirmedUserId && entryUserId) return entryUserId === confirmedUserId;
     return ownRank > 0 && Number(entry.rank || 0) === ownRank;
@@ -399,6 +411,8 @@ async function refreshLeaderboard(summary, previousRank = null, uploadId = "") {
     const board = computeLeaderboard(entries, summary, previousRank, state.userId, {
       limit: LEADERBOARD_ENTRY_LIMIT,
       myRank,
+      allowHigherMyRankScore: Boolean(confirmedUserId),
+      allowHigherUserIdScore: Boolean(confirmedUserId),
     });
 
     if (board) {
