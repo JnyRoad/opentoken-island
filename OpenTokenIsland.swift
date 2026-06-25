@@ -142,8 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         button.image = symbolImage(size: 18)
         button.imagePosition = .imageLeft
         button.title = " -- #--"
-        button.action = #selector(togglePopover)
+        button.action = #selector(handleStatusItemClick)
         button.target = self
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         let openItem = NSMenuItem(title: "打开", action: #selector(openPanelNow), keyEquivalent: "o")
         openItem.target = self
@@ -162,10 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         quitItem.target = self
         contextMenu.addItem(quitItem)
         statusItem.menu = nil
-
-        let rightClick = NSClickGestureRecognizer(target: self, action: #selector(showContextMenu(_:)))
-        rightClick.buttonMask = 0x2
-        button.addGestureRecognizer(rightClick)
     }
 
     private func setupPopover() {
@@ -421,6 +418,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    @objc private func handleStatusItemClick() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+            return
+        }
+        togglePopover()
+    }
+
     private func showPopover() {
         guard let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -483,12 +488,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func showContextMenu(_ recognizer: NSClickGestureRecognizer) {
+    @objc private func showContextMenu() {
         guard let button = statusItem.button else { return }
         logIsland("button.contextMenu.clicked")
-        statusItem.menu = contextMenu
-        button.performClick(nil)
-        statusItem.menu = nil
+        contextMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 2), in: button)
     }
 
     private func refreshPopoverContent() {
