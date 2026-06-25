@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 import WebKit
 
 private final class PosterSnapshotJob: NSObject, WKNavigationDelegate {
@@ -131,11 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        isTerminating = true
         logIsland("app.terminating")
-        timer?.invalidate()
-        eventTimer?.invalidate()
-        serverProcess?.terminate()
+        prepareForQuit()
     }
 
     private func setupStatusItem() {
@@ -147,13 +145,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         button.action = #selector(togglePopover)
         button.target = self
 
-        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
+        let openItem = NSMenuItem(title: "打开", action: #selector(openPanelNow), keyEquivalent: "o")
+        openItem.target = self
+        contextMenu.addItem(openItem)
+        let refreshItem = NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         contextMenu.addItem(refreshItem)
-        let islandItem = NSMenuItem(title: "Show Island", action: #selector(showIslandNow), keyEquivalent: "i")
-        islandItem.target = self
-        contextMenu.addItem(islandItem)
-        let quitItem = NSMenuItem(title: "Quit OpenToken Island", action: #selector(quit), keyEquivalent: "q")
+        let webItem = NSMenuItem(title: "网页", action: #selector(openWebNow), keyEquivalent: "w")
+        webItem.target = self
+        contextMenu.addItem(webItem)
+        let restartItem = NSMenuItem(title: "重启服务", action: #selector(restartServerNow), keyEquivalent: "s")
+        restartItem.target = self
+        contextMenu.addItem(restartItem)
+        contextMenu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         contextMenu.addItem(quitItem)
         statusItem.menu = nil
@@ -408,32 +413,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
         logIsland("button.togglePopover.clicked", details: ["shown": popover.isShown])
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            updateStatusTitle()
-            refreshPopoverContent()
+            showPopover()
         }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem.button else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        updateStatusTitle()
+        refreshPopoverContent()
+    }
+
+    @objc private func openPanelNow() {
+        logIsland("menu.open.clicked")
+        showPopover()
     }
 
     @objc private func refreshNow() {
         logIsland("menu.refresh.clicked")
         updateStatusTitle()
         refreshPopoverContent()
-        showIsland(reason: "refresh-menu")
     }
 
-    @objc private func showIslandNow() {
-        logIsland("menu.showIsland.clicked")
-        showIsland(reason: "manual-menu")
+    @objc private func openWebNow() {
+        logIsland("menu.web.clicked")
+        guard let url = URL(string: "http://127.0.0.1:\(port)/popover.html") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func restartServerNow() {
+        logIsland("menu.restartServer.clicked")
+        stopServerProcess(reason: "menu-restart")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, !self.isTerminating, self.serverProcess == nil else { return }
+            self.startServer()
+            self.updateStatusTitle()
+            self.refreshPopoverContent()
+        }
     }
 
     @objc private func quit() {
         logIsland("menu.quit.clicked")
+        prepareForQuit()
         NSApp.terminate(nil)
+    }
+
+    private func prepareForQuit() {
+        isTerminating = true
+        timer?.invalidate()
+        eventTimer?.invalidate()
+        popover.performClose(nil)
+        islandWindow?.orderOut(nil)
+        islandWindow = nil
+        posterSnapshotJobs.removeAll()
+        stopServerProcess(reason: "quit")
+    }
+
+    private func stopServerProcess(reason: String) {
+        guard let process = serverProcess else { return }
+        logIsland("server.stop.requested", details: ["reason": reason, "pid": process.processIdentifier])
+        serverProcess = nil
+        if process.isRunning {
+            process.terminate()
+            kill(process.processIdentifier, SIGKILL)
+        }
     }
 
     @objc private func showContextMenu(_ recognizer: NSClickGestureRecognizer) {
