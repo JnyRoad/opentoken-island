@@ -101,6 +101,21 @@ test("native menu can restart the local server without showing the island", () =
   assert.doesNotMatch(refreshNow, /showIsland/);
 });
 
+test("native shell writes event logs into daily files", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const logIsland = swift.slice(
+    swift.indexOf("private func logIsland("),
+    swift.indexOf("\n}", swift.indexOf("private func logIsland("))
+  );
+
+  assert.doesNotMatch(swift, /private let eventLogDayFormatter: DateFormatter/);
+  assert.match(logIsland, /\.appendingPathComponent\("logs"\)/);
+  assert.match(logIsland, /let timestamp = ISO8601DateFormatter\(\)\.string\(from: now\)/);
+  assert.match(logIsland, /island-events-\\\(String\(timestamp\.prefix\(10\)\)\)\.log/);
+  assert.match(logIsland, /"at": timestamp/);
+  assert.doesNotMatch(logIsland, /appendingPathComponent\("island-events\.log"\)/);
+});
+
 test("native quit menu item performs explicit shutdown before app termination", () => {
   const swift = read("OpenTokenIsland.swift");
   const quit = swift.slice(

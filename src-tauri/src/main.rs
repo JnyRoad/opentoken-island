@@ -40,6 +40,7 @@ const ISLAND_WIDTH: i32 = 576;
 const ISLAND_HEIGHT: i32 = 134;
 const FLOATING_MARGIN: i32 = 12;
 const PANEL_ANCHOR_GAP: i32 = 430;
+const SECONDS_PER_DAY: u64 = 86_400;
 
 struct ServerProcess(Mutex<Option<Child>>);
 struct PanelState {
@@ -71,11 +72,43 @@ fn escape_json(value: &str) -> String {
     escaped
 }
 
+// Rust std has no UTC date formatter; this converts Unix days to Gregorian UTC.
+fn utc_ymd_from_unix_days(days_since_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    (year as i32, month as u32, day as u32)
+}
+
+fn event_log_path(now: SystemTime) -> PathBuf {
+    let days_since_epoch = now
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() / SECONDS_PER_DAY)
+        .unwrap_or(0) as i64;
+    let (year, month, day) = utc_ymd_from_unix_days(days_since_epoch);
+    user_home()
+        .join(".opentoken")
+        .join("logs")
+        .join(format!("island-events-{year:04}-{month:02}-{day:02}.log"))
+}
+
 fn log_desktop_event(event: &str) {
-    let directory = user_home().join(".opentoken");
+    let now = SystemTime::now();
+    let log_path = event_log_path(now);
+    let directory = log_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| user_home().join(".opentoken").join("logs"));
     let _ = std::fs::create_dir_all(&directory);
-    let log_path = directory.join("island-events.log");
-    let at_ms = SystemTime::now()
+    let at_ms = now
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
@@ -88,6 +121,29 @@ fn log_desktop_event(event: &str) {
             escape_json(event),
             escape_json(event)
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_unix_days_to_utc_dates() {
+        assert_eq!(utc_ymd_from_unix_days(0), (1970, 1, 1));
+        assert_eq!(utc_ymd_from_unix_days(19_782), (2024, 2, 29));
+        assert_eq!(utc_ymd_from_unix_days(20_630), (2026, 6, 26));
+    }
+
+    #[test]
+    fn event_log_path_uses_daily_log_file() {
+        let at_2026_06_26 = UNIX_EPOCH + Duration::from_secs(20_630 * SECONDS_PER_DAY);
+
+        assert!(event_log_path(at_2026_06_26).ends_with(
+            Path::new(".opentoken")
+                .join("logs")
+                .join("island-events-2026-06-26.log")
+        ));
     }
 }
 

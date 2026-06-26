@@ -646,12 +646,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func logIsland(_ event: String, details: [String: Any] = [:]) {
-        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".opentoken")
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".opentoken")
+            .appendingPathComponent("logs")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("island-events.log")
+        let now = Date()
+        let timestamp = ISO8601DateFormatter().string(from: now)
+        let file = directory.appendingPathComponent("island-events-\(String(timestamp.prefix(10))).log")
         let safeEvent = sanitizeLogString(event)
         let entry: [String: Any] = [
-            "at": ISO8601DateFormatter().string(from: Date()),
+            "at": timestamp,
             "layer": "app",
             "event": safeEvent,
             "flow": safeEvent,

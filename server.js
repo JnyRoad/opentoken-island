@@ -5,7 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
-const { appendEventLog } = require("./lib/event-log");
+const { appendDailyEventLog, resolveDailyEventLogPath } = require("./lib/event-log");
 const { rowsFromPayload, summarizeRows, buildSummary } = require("./lib/summary");
 const { buildBattleReport } = require("./lib/island-report");
 const {
@@ -25,9 +25,10 @@ const {
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
 const ROOT = __dirname;
 const HOME = process.env.HOME || os.homedir();
-const CONFIG_PATH = path.join(HOME, ".opentoken", "config.json");
-const STATE_PATH = path.join(HOME, ".opentoken", "island-state.json");
-const EVENT_LOG_PATH = path.join(HOME, ".opentoken", "island-events.log");
+const OPENTOKEN_DIR = path.join(HOME, ".opentoken");
+const CONFIG_PATH = path.join(OPENTOKEN_DIR, "config.json");
+const STATE_PATH = path.join(OPENTOKEN_DIR, "island-state.json");
+const EVENT_LOG_DIRECTORY = path.join(OPENTOKEN_DIR, "logs");
 const DEFAULT_UPSTREAM_ORIGIN = "https://scys.com";
 const MAX_UPLOAD_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -92,7 +93,7 @@ function saveState() {
 }
 
 function logIslandEvent(message, details = {}) {
-  appendEventLog(EVENT_LOG_PATH, {
+  appendDailyEventLog(EVENT_LOG_DIRECTORY, {
     layer: "server",
     event: message,
     flow: details.flow || "",
@@ -520,7 +521,7 @@ async function handleApi(req, res, url) {
     if (req.method !== "POST") return json(req, res, 405, { ok: false, error: "POST required" });
     if (!requireApiToken(req, res)) return;
     logIslandEvent("logs open requested", { flow: "api.logs.open" });
-    const result = await openPath(EVENT_LOG_PATH);
+    const result = await openPath(resolveDailyEventLogPath(EVENT_LOG_DIRECTORY));
     return json(req, res, result.ok ? 200 : 500, result);
   }
 
