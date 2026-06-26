@@ -31,9 +31,9 @@ The tray icon appears in the Windows notification area.
 - Hover the tray icon to show the full quota panel temporarily near the notification area.
 - Left click the tray icon to pin the prewarmed detail panel so it stays open.
 - Right click the tray icon to open the menu.
-- Use `Show Island` to display the compact notification window.
-- Use `Open Browser UI` to open `http://127.0.0.1:4174/popover.html`.
-- Use `Open Logs` to open `%USERPROFILE%\.opentoken\island-events.log`.
+- Use `打开` to open the detail panel.
+- Use `网页` to open `http://127.0.0.1:4174/popover.html`.
+- Event logs are written to `%USERPROFILE%\.opentoken\logs\island-events-YYYY-MM-DD.log`.
 
 The panel and island WebViews are created hidden during startup. Hover uses the same `popover.html` panel as the main UI; left click switches that panel into a pinned state. The floating panel is borderless, transparent, clamped to the current monitor work area, keeps a 430 px gap from the tray anchor so it floats above the Windows hidden-icons flyout, and includes extra transparent padding so the glass panel shadow and rounded corners are not clipped.
 

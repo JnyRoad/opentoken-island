@@ -103,6 +103,21 @@ assert.doesNotMatch(
 );
 assert.match(
   mainRs,
+  /fn event_log_path\(now: SystemTime\) -> PathBuf/,
+  "Desktop shell event logs should resolve through a daily log path helper"
+);
+assert.match(
+  mainRs,
+  /\.join\("logs"\)[\s\S]*island-events-\{year:04\}-\{month:02\}-\{day:02\}\.log/,
+  "Desktop shell event logs should be written under .opentoken/logs by UTC day"
+);
+assert.doesNotMatch(
+  mainRs,
+  /join\("island-events\.log"\)/,
+  "Desktop shell event logs must not keep writing to the legacy root event log"
+);
+assert.match(
+  mainRs,
   /"restart-server" => \{[\s\S]*restart_server\(app\)/,
   "Restart menu item must restart the managed local server"
 );

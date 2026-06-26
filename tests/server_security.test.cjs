@@ -301,7 +301,8 @@ test("client event logs require token and redact sensitive fields", async (t) =>
   });
   assert.equal(allowed.status, 200);
 
-  const logPath = path.join(home, ".opentoken", "island-events.log");
+  const logPath = path.join(home, ".opentoken", "logs", `island-events-${new Date().toISOString().slice(0, 10)}.log`);
+  const legacyLogPath = path.join(home, ".opentoken", "island-events.log");
   await waitUntil(() => fs.existsSync(logPath));
   const entries = fs.readFileSync(logPath, "utf8")
     .trim()
@@ -313,18 +314,54 @@ test("client event logs require token and redact sensitive fields", async (t) =>
   assert.equal(clientEntry.details.token, "<redacted>");
   assert.equal(clientEntry.details.path, "/tokenrank/api/subapp/u/<account>?debug=1");
   assert.equal(clientEntry.details.payload, "<omitted>");
+  assert.equal(fs.existsSync(legacyLogPath), false);
 });
 
 test("broken event log file does not break local API responses", async (t) => {
   const home = tempDir("home");
   const { port } = await startIslandServer(t, { home });
-  const logPath = path.join(home, ".opentoken", "island-events.log");
+  const logPath = path.join(home, ".opentoken", "logs", `island-events-${new Date().toISOString().slice(0, 10)}.log`);
   fs.rmSync(logPath, { force: true, recursive: true });
   fs.mkdirSync(logPath, { recursive: true });
 
   const response = await request(port, { path: "/api/client-config" });
   assert.equal(response.status, 200);
   assert.match(JSON.parse(response.body).apiToken, /^[a-f0-9-]{16,}$/i);
+});
+
+test("open logs opens the current daily event log", async (t) => {
+  const home = tempDir("home");
+  const fakeBin = path.join(home, "bin");
+  const openerMarker = path.join(home, "opened-log-path.txt");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const openerName = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
+  const fakeOpener = path.join(fakeBin, openerName);
+  fs.writeFileSync(
+    fakeOpener,
+    `#!/usr/bin/env node\nconst fs = require("fs");\nconst target = process.argv[process.argv.length - 1];\nfs.writeFileSync(process.env.OPENTOKEN_OPEN_MARKER, target);\n`
+  );
+  fs.chmodSync(fakeOpener, 0o755);
+
+  const { port } = await startIslandServer(t, {
+    home,
+    env: {
+      OPENTOKEN_OPEN_MARKER: openerMarker,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
+  const config = await request(port, { path: "/api/client-config" });
+  const { apiToken } = JSON.parse(config.body);
+  const response = await request(port, {
+    path: "/api/logs/open",
+    method: "POST",
+    headers: { "x-opentoken-island-token": apiToken },
+  });
+  const expectedLogPath = path.join(home, ".opentoken", "logs", `island-events-${new Date().toISOString().slice(0, 10)}.log`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body), { ok: true, output: "opened" });
+  assert.equal(fs.readFileSync(openerMarker, "utf8"), expectedLogPath);
+  assert.equal(fs.existsSync(path.join(home, ".opentoken", "island-events.log")), false);
 });
 
 test("manual summary refresh requires the local client token before the first upload", async (t) => {

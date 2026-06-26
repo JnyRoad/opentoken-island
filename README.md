@@ -67,7 +67,7 @@ curl -sS -X POST \
 Watch the listener log:
 
 ```bash
-tail -f ~/.opentoken/island-events.log
+tail -f ~/.opentoken/logs/island-events-$(date -u +%F).log
 ```
 
 ## Files

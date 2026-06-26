@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const {
   appendEventLog,
+  appendDailyEventLog,
+  resolveDailyEventLogPath,
   sanitizeLogDetails,
 } = require("../../lib/event-log");
 
@@ -56,6 +58,32 @@ test("appendEventLog writes one structured JSON line with a safe schema", () => 
     token: "<redacted>",
     status: 200,
   });
+});
+
+test("resolveDailyEventLogPath names event logs by UTC day", () => {
+  const logDirectory = path.join(os.tmpdir(), "opentoken-event-logs");
+  const logPath = resolveDailyEventLogPath(logDirectory, new Date("2026-06-26T00:29:01.876Z"));
+
+  assert.equal(logPath, path.join(logDirectory, "island-events-2026-06-26.log"));
+});
+
+test("appendDailyEventLog writes into the daily log directory", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "opentoken-daily-event-log-"));
+  const logDirectory = path.join(directory, "logs");
+  const legacyLogPath = path.join(directory, "island-events.log");
+
+  assert.equal(appendDailyEventLog(logDirectory, {
+    layer: "test",
+    event: "daily.write",
+    flow: "daily.write",
+  }, { now: new Date("2026-06-26T00:29:01.876Z") }), true);
+
+  const dailyLogPath = path.join(logDirectory, "island-events-2026-06-26.log");
+  const entry = JSON.parse(fs.readFileSync(dailyLogPath, "utf8").trim());
+
+  assert.equal(entry.at, "2026-06-26T00:29:01.876Z");
+  assert.equal(entry.event, "daily.write");
+  assert.equal(fs.existsSync(legacyLogPath), false);
 });
 
 test("appendEventLog never throws when the log target cannot be written", () => {
