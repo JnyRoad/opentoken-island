@@ -141,13 +141,52 @@ test("installer stops stale bundled server processes before starting the LaunchA
 
   const cleanupEnd = installScript.indexOf("\n}\n", cleanupStart);
   const cleanup = installScript.slice(cleanupStart, cleanupEnd);
-  assert.match(cleanup, /OpenToken Island\.app\/Contents\/Resources\/server\.js/);
-  assert.match(cleanup, /pgrep -f/);
+  const cleanupSection = installScript.slice(cleanupStart, installLaunchAgent);
+  assert.match(installScript, /need_command lsof/);
+  assert.match(cleanup, /stale_server_pids/);
+  assert.match(cleanupSection, /lsof -nP -t -iTCP:"\$\{PORT\}" -sTCP:LISTEN/);
+  assert.match(cleanupSection, /is_opentoken_island_server_process "\$\{pid\}"/);
+  assert.match(cleanupSection, /OpenToken Island\.app\/Contents\/Resources\/server\.js/);
   assert.match(cleanup, /kill "\$\{pid\}"/);
   assert.match(cleanup, /kill -KILL "\$\{pid\}"/);
-  assert.match(cleanup, /remaining_pids="\$\(pgrep -f "\$\{pattern\}" 2>\/dev\/null \|\| true\)"/);
+  assert.match(cleanup, /pids="\$\(stale_server_pids\)"\s*while IFS= read -r pid;/);
+  assert.match(cleanup, /remaining_pids="\$\(stale_server_pids\)"/);
   assert.match(cleanup, /ps -o pid= -o command= -p/);
   assert.match(cleanup, /die "stale OpenToken Island server processes are still running:/);
+  assert.doesNotMatch(cleanupSection, /pgrep -f/);
+});
+
+test("installer stale server matcher accepts only OpenToken Island node server commands", () => {
+  const installScript = read("scripts/install.sh");
+  const matcherStart = installScript.indexOf("is_opentoken_island_server_process() {");
+  const matcherEnd = installScript.indexOf("\n}\n\ninstall_launch_agent", matcherStart);
+  assert.notEqual(matcherStart, -1);
+  assert.notEqual(matcherEnd, -1);
+
+  const matcher = installScript.slice(matcherStart, matcherEnd + 3).replace(
+    /command="\$\(ps -ww -o command= -p "\$\{pid\}" 2>\/dev\/null \|\| true\)"/,
+    'command="${MOCK_COMMAND:-}"'
+  );
+  const bash = [
+    "set -euo pipefail",
+    matcher,
+    "is_opentoken_island_server_process 123",
+  ].join("\n");
+
+  function matches(command) {
+    const result = spawnSync("bash", ["-c", bash], {
+      env: { ...process.env, MOCK_COMMAND: command },
+      encoding: "utf8",
+    });
+    return result.status === 0;
+  }
+
+  assert.equal(matches("node /Applications/OpenToken Island.app/Contents/Resources/server.js"), true);
+  assert.equal(matches("/usr/bin/env node /Users/me/Applications/OpenToken Island.app/Contents/Resources/server.js"), true);
+  assert.equal(matches("/opt/homebrew/bin/node /Users/me/Applications/OpenToken Island.app/Contents/Resources/server.js"), true);
+  assert.equal(matches("python /Users/me/Applications/OpenToken Island.app/Contents/Resources/server.js"), false);
+  assert.equal(matches("node /tmp/server.js"), false);
+  assert.equal(matches("node /Users/me/Applications/OpenToken Island.app/Contents/Resources/server.js --extra"), false);
 });
 
 test("macOS app shell compiles with the WebKit APIs used by the installer", { skip: process.platform !== "darwin" }, (t) => {

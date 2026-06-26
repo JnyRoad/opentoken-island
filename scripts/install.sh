@@ -331,11 +331,10 @@ install_app() {
 }
 
 stop_stale_server_processes() {
-  local pattern="OpenToken Island.app/Contents/Resources/server.js"
   local pids
   local pid
   local remaining_pids
-  pids="$(pgrep -f "${pattern}" 2>/dev/null || true)"
+  pids="$(stale_server_pids)"
   [[ -n "${pids}" ]] || return 0
 
   while IFS= read -r pid; do
@@ -345,14 +344,13 @@ stop_stale_server_processes() {
 
   sleep 0.5
 
+  pids="$(stale_server_pids)"
   while IFS= read -r pid; do
     [[ -n "${pid}" ]] || continue
-    if kill -0 "${pid}" 2>/dev/null; then
-      kill -KILL "${pid}" 2>/dev/null || true
-    fi
+    kill -KILL "${pid}" 2>/dev/null || true
   done <<< "${pids}"
 
-  remaining_pids="$(pgrep -f "${pattern}" 2>/dev/null || true)"
+  remaining_pids="$(stale_server_pids)"
   if [[ -n "${remaining_pids}" ]]; then
     while IFS= read -r pid; do
       [[ -n "${pid}" ]] || continue
@@ -360,6 +358,34 @@ stop_stale_server_processes() {
     done <<< "${remaining_pids}"
     die "stale OpenToken Island server processes are still running: ${remaining_pids//$'\n'/,}"
   fi
+}
+
+stale_server_pids() {
+  local pids
+  local pid
+  pids="$(lsof -nP -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -n "${pids}" ]] || return 0
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    if is_opentoken_island_server_process "${pid}"; then
+      printf '%s\n' "${pid}"
+    fi
+  done <<< "${pids}"
+}
+
+is_opentoken_island_server_process() {
+  local pid="$1"
+  local command
+  command="$(ps -ww -o command= -p "${pid}" 2>/dev/null || true)"
+  case "${command}" in
+    node\ *|*/node\ *|*/env\ node\ *) ;;
+    *) return 1 ;;
+  esac
+  case "${command}" in
+    *"OpenToken Island.app/Contents/Resources/server.js") return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 install_launch_agent() {
@@ -487,6 +513,7 @@ NODE
 main() {
   need_command swiftc
   need_command node
+  need_command lsof
   need_command sips
   need_command iconutil
 

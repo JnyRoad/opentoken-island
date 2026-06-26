@@ -61,6 +61,40 @@ test("native shell does not restart stale or port-conflict server exits", () => 
   assert.match(startServer, /return\s*\}\s*self\.scheduleServerRestart\(reason: "server-exit"\)/);
 });
 
+test("native shell clears stale bundled server processes before launch", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const didFinishStart = swift.indexOf("func applicationDidFinishLaunching");
+  const didFinishEnd = swift.indexOf("func applicationWillTerminate");
+  const staleStart = swift.indexOf("private func stopStaleServerProcesses");
+  const startServerStart = swift.indexOf("private func startServer()");
+  const scheduleRestartStart = swift.indexOf("private func scheduleServerRestart");
+  const detectedNodeStart = swift.indexOf("private func detectedNodeBinary");
+
+  assert.notEqual(didFinishStart, -1);
+  assert.notEqual(didFinishEnd, -1);
+  assert.notEqual(staleStart, -1);
+  assert.notEqual(startServerStart, -1);
+  assert.notEqual(scheduleRestartStart, -1);
+  assert.notEqual(detectedNodeStart, -1);
+
+  const didFinishLaunching = swift.slice(didFinishStart, didFinishEnd);
+  const stopStaleServers = swift.slice(staleStart, scheduleRestartStart);
+  const startServer = swift.slice(startServerStart, detectedNodeStart);
+
+  assert.match(didFinishLaunching, /stopStaleServerProcesses\(\)\s*startServer\(\)/);
+  assert.match(swift, /bundledServerResourceSuffix = "OpenToken Island\.app\/Contents\/Resources\/server\.js"/);
+  assert.match(stopStaleServers, /\/usr\/sbin\/lsof/);
+  assert.match(stopStaleServers, /"-iTCP:\\\(port\)"/);
+  assert.match(stopStaleServers, /isOpenTokenIslandServerProcess\(pid: \$0\)/);
+  assert.match(stopStaleServers, /trimmed\.contains\("\/node "\)/);
+  assert.match(stopStaleServers, /trimmed\.hasSuffix\(bundledServerResourceSuffix\)/);
+  assert.match(stopStaleServers, /Darwin\.kill\(pid, SIGTERM\)/);
+  assert.match(stopStaleServers, /Darwin\.kill\(pid, SIGKILL\)/);
+  assert.match(stopStaleServers, /server\.staleCleanup\.completed/);
+  assert.doesNotMatch(stopStaleServers, /pgrep/);
+  assert.match(startServer, /stopStaleServerProcesses\(\)/);
+});
+
 test("native status menu uses short recovery actions without logs or island item", () => {
   const swift = read("OpenTokenIsland.swift");
   const setupStatusItem = swift.slice(

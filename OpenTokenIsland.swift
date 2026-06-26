@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let port = 4174
     private let serverRestartDelay: TimeInterval = 5
     private let serverPortInUseExitCode: Int32 = 98
+    private let bundledServerResourceSuffix = "OpenToken Island.app/Contents/Resources/server.js"
     private var lastIslandEventId: Int64 = 0
     private var unlockedBadgeTitles = Set<String>()
     private var didLoadInitialSnapshot = false
@@ -117,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         NSApp.setActivationPolicy(.accessory)
         NSApp.applicationIconImage = symbolImage(size: 256)
         logIsland("app.launched")
+        stopStaleServerProcesses()
         startServer()
         setupStatusItem()
         setupPopover()
@@ -303,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func startServer() {
         guard serverProcess == nil else { return }
+        stopStaleServerProcesses()
         let resources = Bundle.main.resourceURL!
         let server = resources.appendingPathComponent("server.js").path
         let home = NSHomeDirectory()
@@ -346,6 +349,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             logIsland("server.launch.failed", details: ["error": error.localizedDescription])
             scheduleServerRestart(reason: "launch-failed")
         }
+    }
+
+    private func stopStaleServerProcesses() {
+        let pids = staleServerListenerPids()
+        guard !pids.isEmpty else { return }
+
+        for pid in pids {
+            _ = Darwin.kill(pid, SIGTERM)
+        }
+        usleep(300_000)
+
+        var forceKilled = [Int]()
+        for pid in pids where isOpenTokenIslandServerProcess(pid: pid) && Darwin.kill(pid, 0) == 0 {
+            _ = Darwin.kill(pid, SIGKILL)
+            forceKilled.append(Int(pid))
+        }
+        logIsland("server.staleCleanup.completed", details: [
+            "pids": pids.map { Int($0) },
+            "forceKilled": forceKilled
+        ])
+    }
+
+    private func staleServerListenerPids() -> [Int32] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            logIsland("server.staleCleanup.failed", details: ["error": error.localizedDescription])
+            return []
+        }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?
+            .split(whereSeparator: \.isNewline)
+            .compactMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { $0 != getpid() && isOpenTokenIslandServerProcess(pid: $0) } ?? []
+    }
+
+    private func isOpenTokenIslandServerProcess(pid: Int32) -> Bool {
+        guard let command = commandLine(pid: pid) else { return false }
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isNode = trimmed.hasPrefix("node ")
+            || trimmed.contains("/node ")
+            || trimmed.contains("/env node ")
+        return isNode && trimmed.hasSuffix(bundledServerResourceSuffix)
+    }
+
+    private func commandLine(pid: Int32) -> String? {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-ww", "-p", "\(pid)", "-o", "command="]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
     }
 
     private func scheduleServerRestart(reason: String) {
