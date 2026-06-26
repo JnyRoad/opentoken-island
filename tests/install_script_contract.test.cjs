@@ -128,6 +128,28 @@ test("installer re-enables and kickstarts the LaunchAgent before waiting for the
   assert.ok(installLaunchAgent < waitForApi, "agent must be kickstarted before polling the API");
 });
 
+test("installer stops stale bundled server processes before starting the LaunchAgent", () => {
+  const installScript = read("scripts/install.sh");
+  const cleanupStart = installScript.indexOf("stop_stale_server_processes() {");
+  const installLaunchAgent = installScript.lastIndexOf("  install_launch_agent");
+  const cleanupCall = installScript.lastIndexOf("  stop_stale_server_processes");
+
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(cleanupCall, -1);
+  assert.notEqual(installLaunchAgent, -1);
+  assert.ok(cleanupCall < installLaunchAgent, "stale bundled server cleanup must run before launching the new agent");
+
+  const cleanupEnd = installScript.indexOf("\n}\n", cleanupStart);
+  const cleanup = installScript.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanup, /OpenToken Island\.app\/Contents\/Resources\/server\.js/);
+  assert.match(cleanup, /pgrep -f/);
+  assert.match(cleanup, /kill "\$\{pid\}"/);
+  assert.match(cleanup, /kill -KILL "\$\{pid\}"/);
+  assert.match(cleanup, /remaining_pids="\$\(pgrep -f "\$\{pattern\}" 2>\/dev\/null \|\| true\)"/);
+  assert.match(cleanup, /ps -o pid= -o command= -p/);
+  assert.match(cleanup, /die "stale OpenToken Island server processes are still running:/);
+});
+
 test("macOS app shell compiles with the WebKit APIs used by the installer", { skip: process.platform !== "darwin" }, (t) => {
   const swiftc = spawnSync("swiftc", ["--version"], { encoding: "utf8" });
   if (swiftc.status !== 0) {

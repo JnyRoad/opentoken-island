@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let contextMenu = NSMenu()
     private let port = 4174
     private let serverRestartDelay: TimeInterval = 5
+    private let serverPortInUseExitCode: Int32 = 98
     private var lastIslandEventId: Int64 = 0
     private var unlockedBadgeTitles = Set<String>()
     private var didLoadInitialSnapshot = false
@@ -323,11 +324,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         process.terminationHandler = { [weak self] process in
             DispatchQueue.main.async {
                 guard let self else { return }
+                let status = process.terminationStatus
                 self.logIsland("server.exited", details: [
-                    "status": process.terminationStatus,
+                    "status": status,
                     "reason": process.terminationReason.rawValue
                 ])
-                if self.serverProcess === process { self.serverProcess = nil }
+                guard self.serverProcess === process else { return }
+                self.serverProcess = nil
+                if status == self.serverPortInUseExitCode {
+                    self.logIsland("server.portInUse", details: ["port": self.port])
+                    return
+                }
                 self.scheduleServerRestart(reason: "server-exit")
             }
         }

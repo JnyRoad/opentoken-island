@@ -23,6 +23,7 @@ const {
 } = require("./lib/upload-state");
 
 const PORT = Number(process.env.OPENTOKEN_ISLAND_PORT || 4174);
+const PORT_IN_USE_EXIT_CODE = 98;
 const ROOT = __dirname;
 const HOME = process.env.HOME || os.homedir();
 const OPENTOKEN_DIR = path.join(HOME, ".opentoken");
@@ -622,6 +623,13 @@ const server = http.createServer((req, res) => {
 
 if (require.main === module) {
   ensureProxyConfig();
+  server.on("error", (error) => {
+    if (error && error.code === "EADDRINUSE") {
+      console.error(`OpenToken Island proxy port already in use at http://127.0.0.1:${PORT}`);
+      process.exit(PORT_IN_USE_EXIT_CODE);
+    }
+    throw error;
+  });
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`OpenToken Island proxy running at http://127.0.0.1:${PORT}`);
   });

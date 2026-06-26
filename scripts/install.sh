@@ -330,6 +330,38 @@ install_app() {
   cp -R "${BUILD_APP}" "${APP_DIR}"
 }
 
+stop_stale_server_processes() {
+  local pattern="OpenToken Island.app/Contents/Resources/server.js"
+  local pids
+  local pid
+  local remaining_pids
+  pids="$(pgrep -f "${pattern}" 2>/dev/null || true)"
+  [[ -n "${pids}" ]] || return 0
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    kill "${pid}" 2>/dev/null || true
+  done <<< "${pids}"
+
+  sleep 0.5
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    if kill -0 "${pid}" 2>/dev/null; then
+      kill -KILL "${pid}" 2>/dev/null || true
+    fi
+  done <<< "${pids}"
+
+  remaining_pids="$(pgrep -f "${pattern}" 2>/dev/null || true)"
+  if [[ -n "${remaining_pids}" ]]; then
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      ps -o pid= -o command= -p "${pid}" >&2 || true
+    done <<< "${remaining_pids}"
+    die "stale OpenToken Island server processes are still running: ${remaining_pids//$'\n'/,}"
+  fi
+}
+
 install_launch_agent() {
   mkdir -p "${HOME}/Library/LaunchAgents" "${HOME}/.opentoken"
   cat > "${LAUNCH_AGENT_PATH}" <<PLIST
@@ -466,6 +498,7 @@ main() {
   configure_opentoken_proxy "${opentoken_bin}" "${node_bin}"
   build_app
   install_app
+  stop_stale_server_processes
   install_launch_agent
 
   if wait_for_local_api "${node_bin}"; then

@@ -41,9 +41,24 @@ test("native shell restarts the child node server after unexpected exits", () =>
   assert.match(swift, /private func scheduleServerRestart\(reason: String\)/);
   assert.match(terminate, /prepareForQuit\(\)/);
   assert.match(prepareForQuit, /isTerminating = true/);
-  assert.match(startServer, /if self\.serverProcess === process \{\s*self\.serverProcess = nil\s*\}/);
+  assert.match(startServer, /guard self\.serverProcess === process else \{\s*return\s*\}/);
+  assert.match(startServer, /self\.serverProcess = nil/);
   assert.match(startServer, /self\.scheduleServerRestart\(reason: "server-exit"\)/);
   assert.match(startServer, /scheduleServerRestart\(reason: "launch-failed"\)/);
+});
+
+test("native shell does not restart stale or port-conflict server exits", () => {
+  const swift = read("OpenTokenIsland.swift");
+  const startServer = swift.slice(
+    swift.indexOf("private func startServer()"),
+    swift.indexOf("private func detectedNodeBinary")
+  );
+
+  assert.match(swift, /private let serverPortInUseExitCode: Int32 = 98/);
+  assert.match(startServer, /guard self\.serverProcess === process else \{\s*return\s*\}/);
+  assert.match(startServer, /if status == self\.serverPortInUseExitCode \{/);
+  assert.match(startServer, /self\.logIsland\("server\.portInUse", details: \["port": self\.port\]\)/);
+  assert.match(startServer, /return\s*\}\s*self\.scheduleServerRestart\(reason: "server-exit"\)/);
 });
 
 test("native status menu uses short recovery actions without logs or island item", () => {

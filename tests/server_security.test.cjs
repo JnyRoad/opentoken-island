@@ -187,6 +187,42 @@ test("health endpoint identifies island without running opentoken service status
   assert.equal(fs.existsSync(marker), false);
 });
 
+test("server exits with a dedicated code when the configured port is already in use", async (t) => {
+  const parent = tempDir("runtime");
+  const root = copyRuntimeRoot(parent);
+  const home = tempDir("home");
+  const port = await freePort();
+  const blocker = net.createServer();
+  await new Promise((resolve, reject) => {
+    blocker.once("error", reject);
+    blocker.listen(port, "127.0.0.1", resolve);
+  });
+  t.after(() => blocker.close());
+
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      HOME: home,
+      OPENTOKEN_ISLAND_PORT: String(port),
+      OPENTOKEN_BIN: process.execPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+  const status = await new Promise((resolve) => {
+    child.on("exit", (code) => resolve(code));
+  });
+
+  assert.equal(status, 98);
+  assert.match(stderr, /port already in use/i);
+  assert.doesNotMatch(stderr, /Unhandled 'error' event|throw er/);
+});
+
 test("static file server rejects same-prefix path traversal", async (t) => {
   const parent = tempDir("static");
   const root = copyRuntimeRoot(parent);
