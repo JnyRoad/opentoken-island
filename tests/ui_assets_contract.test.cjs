@@ -80,6 +80,24 @@ test("browser prototype renders API tool labels without innerHTML", () => {
   assert.doesNotMatch(html, /toolList\.innerHTML\s*=/);
 });
 
+test("tool bars use barPct while pct remains the real share", () => {
+  const browser = read("index.html");
+  const popover = read("popover.html");
+
+  assert.match(browser, /clampPercent\(tool && tool\.barPct\)/);
+  assert.match(popover, /function clampPercent\(value\)/);
+  assert.match(popover, /clampPercent\(tool\.barPct \?\? tool\.pct\)/);
+});
+
+test("browser prototype uses summary rank labels without fake fallback values", () => {
+  const browser = read("index.html");
+
+  assert.doesNotMatch(browser, /data\.rank \|\| 17/);
+  assert.doesNotMatch(browser, /nextRankGap \|\| 0/);
+  assert.match(browser, /rankValue\.textContent = rankLabel/);
+  assert.match(browser, /rankDelta\.textContent = data\.rankDeltaLabel/);
+});
+
 test("mac app bundle includes the full assets directory", () => {
   const installScript = read("scripts/install.sh");
   assert.match(installScript, /cp -R "\$\{ROOT_DIR\}\/assets"/);

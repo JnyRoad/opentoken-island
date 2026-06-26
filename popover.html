@@ -69,6 +69,12 @@ function setLoad(isLoading) {
   $('#uploadLabel').textContent = isLoading ? 'Uploading...' : 'Upload now';
 }
 
+function clampPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) return 0;
+  return Math.max(0, Math.min(100, percent));
+}
+
 function render(data) {
   if (!data || !data.ok) return;
   latestSummary = data;
@@ -116,7 +122,7 @@ function render(data) {
   $('#rankGap').innerHTML = battleText;
   $('#serviceText').textContent = account + ' · ' + data.date + ' · ' + daemon;
   $('#toolList').innerHTML = (data.tools || []).map((tool) =>
-    '<div class="tool"><span>' + esc(tool.label) + '</span><span class="bar"><i style="width:' + tool.pct + '%"></i></span><span class="tool-value">' + esc(tool.valueLabel) + '</span></div>'
+    '<div class="tool"><span>' + esc(tool.label) + '</span><span class="bar"><i style="width:' + clampPercent(tool.barPct ?? tool.pct) + '%"></i></span><span class="tool-value">' + esc(tool.valueLabel) + '</span></div>'
   ).join('') || '<div class="tool"><span>No data</span><span></span><span class="tool-value">--</span></div>';
   renderQuests(data.quests);
   icons();

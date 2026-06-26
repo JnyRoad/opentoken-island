@@ -43,12 +43,15 @@ test("summarizeRows honors preferredDate when present", () => {
   assert.equal(summarizeRows(rows, "2026-06-22").date, "2026-06-22");
 });
 
-test("toolsFromMap caps at 6 and floors pct at 4", () => {
+test("toolsFromMap uses exact total share percentage and floors only bar width", () => {
   const map = { a: 100, b: 50, c: 25, d: 12, e: 6, f: 3, g: 1 };
   const tools = toolsFromMap(map);
   assert.equal(tools.length, 6);
-  assert.equal(tools[0].pct, 100);
-  assert.ok(tools[5].pct >= 4);
+  assert.equal(tools[0].pct, 51);
+  assert.equal(tools[0].barPct, 51);
+  assert.equal(tools[1].pct, 25);
+  assert.equal(tools[5].pct, 2);
+  assert.equal(tools[5].barPct, 4);
 });
 
 test("findOwnEntry prefers userId among entries that match the current score and tools", () => {
@@ -442,6 +445,7 @@ test("summarizeRows on empty rows yields zeros and empty date", () => {
 
 test("toolsFromMap on empty map returns []", () => {
   assert.deepEqual(toolsFromMap({}), []);
+  assert.deepEqual(toolsFromMap(null), []);
 });
 
 test("buildSummary uses upload source when no leaderboard own", () => {
@@ -536,8 +540,219 @@ test("buildSummary uses leaderboard source when own present", () => {
   });
   assert.equal(s.source, "leaderboard");
   assert.equal(s.rank, 2);
+  assert.equal(s.rankDeltaLabel, "+1");
   assert.equal(s.total, 200);
   assert.equal(s.upstream.accepted, 1);
+});
+
+test("buildSummary uses leaderboard raw score and tool breakdown when platform data is richer", () => {
+  const s = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: {
+        date: "2026-06-26",
+        total: 257_246_635,
+        normalized: 16_287_019,
+        byTool: { codex: 257_246_635 },
+      },
+      upstream: { json: { accepted: 1 }, status: 200 },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      updatedAt: "2026-06-26T03:21:36.492Z",
+      own: {
+        rank: 27,
+        score: 258_675_610,
+        byTool: {
+          codex: 251_406_752,
+          "claude-code": 7_268_858,
+        },
+      },
+      gapToPrevious: 5_032_602,
+      leadOverNext: 7_712_300,
+      rankDelta: 0,
+    },
+  });
+
+  assert.equal(s.source, "leaderboard");
+  assert.equal(s.total, 258_675_610);
+  assert.equal(s.leaderboardScore, 258_675_610);
+  assert.deepEqual(s.tools.map((tool) => [tool.name, tool.value]), [
+    ["codex", 251_406_752],
+    ["claude-code", 7_268_858],
+  ]);
+  assert.deepEqual(s.tools.map((tool) => [tool.name, tool.pct]), [
+    ["codex", 97],
+    ["claude-code", 3],
+  ]);
+  assert.deepEqual(s.tools.map((tool) => [tool.name, tool.barPct]), [
+    ["codex", 97],
+    ["claude-code", 4],
+  ]);
+  assert.equal(s.game.mainTool.shareLabel, "97%");
+  assert.equal(s.game.badges.find((badge) => badge.title === "主力工具").detail, "Codex 97%");
+});
+
+test("buildSummary ignores invalid leaderboard own values and falls back to upload summary", () => {
+  const s = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: {
+        date: "2026-06-26",
+        total: 100,
+        normalized: 10,
+        byTool: { codex: 100 },
+      },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      own: {
+        rank: 2,
+        score: "Infinity",
+        byTool: null,
+        estimated: true,
+      },
+      estimated: true,
+      gapToPrevious: 1,
+      leadOverNext: 1,
+      rankDelta: 7,
+    },
+  });
+
+  assert.equal(s.source, "upload");
+  assert.equal(s.total, 100);
+  assert.equal(s.leaderboardScore, 10);
+  assert.equal(s.rank, null);
+  assert.equal(s.rankEstimated, false);
+  assert.equal(s.rankDelta, null);
+  assert.equal(s.rankDeltaLabel, "--");
+  assert.equal(s.gapToPrevious, null);
+  assert.equal(s.leadOverNext, null);
+  assert.equal(s.report.title, "等待排名");
+  assert.equal(s.report.metric, "#--");
+  assert.deepEqual(s.tools.map((tool) => [tool.name, tool.value, tool.pct]), [
+    ["codex", 100, 100],
+  ]);
+});
+
+test("buildSummary rejects leaderboard own entries with invalid rank", () => {
+  const s = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: {
+        date: "2026-06-26",
+        total: 100,
+        normalized: 10,
+        byTool: { codex: 100 },
+      },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      own: {
+        rank: "Infinity",
+        score: 120,
+        byTool: { codex: 120 },
+      },
+      gapToPrevious: 1,
+      leadOverNext: 1,
+      rankDelta: 7,
+    },
+  });
+
+  assert.equal(s.source, "upload");
+  assert.equal(s.total, 100);
+  assert.equal(s.rank, null);
+  assert.equal(s.rankLabel, "#--");
+  assert.equal(s.report.metric, "#--");
+});
+
+test("buildSummary clamps invalid leaderboard delta and gaps instead of leaking Infinity", () => {
+  const s = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: {
+        date: "2026-06-26",
+        total: 100,
+        normalized: 10,
+        byTool: { codex: 100 },
+      },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      own: {
+        rank: 2,
+        score: 120,
+        byTool: { codex: 120 },
+      },
+      gapToPrevious: "Infinity",
+      leadOverNext: "NaN",
+      rankDelta: "Infinity",
+    },
+  });
+
+  assert.equal(s.source, "leaderboard");
+  assert.equal(s.rank, 2);
+  assert.equal(s.total, 120);
+  assert.equal(s.rankDelta, null);
+  assert.equal(s.rankDeltaLabel, "--");
+  assert.equal(s.gapToPrevious, null);
+  assert.equal(s.leadOverNext, null);
+  assert.doesNotMatch(s.report.title, /Infinity/);
+  assert.doesNotMatch(s.report.copy, /Infinity/);
+});
+
+test("buildSummary does not pass neighbors with invalid metrics into game quests", () => {
+  const chasing = buildSummary({
+    lastUpload: {
+      uploadId: "upload-1",
+      summary: {
+        date: "2026-06-26",
+        total: 100,
+        byTool: { codex: 100 },
+      },
+    },
+    leaderboard: {
+      uploadId: "upload-1",
+      own: {
+        rank: 2,
+        score: 120,
+        byTool: { codex: 120 },
+      },
+      previous: { rank: 1, name: "Alice", score: 200 },
+      gapToPrevious: "Infinity",
+      leadOverNext: 10,
+      rankDelta: 0,
+    },
+  });
+
+  assert.equal(chasing.game.quests[0].detail, "等待榜单排名");
+  assert.doesNotMatch(chasing.game.quests[0].detail, /Alice|0/);
+
+  const king = buildSummary({
+    lastUpload: {
+      uploadId: "upload-2",
+      summary: {
+        date: "2026-06-26",
+        total: 200,
+        byTool: { codex: 200 },
+      },
+    },
+    leaderboard: {
+      uploadId: "upload-2",
+      own: {
+        rank: 1,
+        score: 200,
+        byTool: { codex: 200 },
+      },
+      next: { rank: 2, name: "Bob", score: 100 },
+      gapToPrevious: 0,
+      leadOverNext: "NaN",
+      rankDelta: 0,
+    },
+  });
+
+  assert.equal(king.game.quests[0].detail, "已确认今日总榜第 1");
+  assert.doesNotMatch(king.game.quests[0].detail, /Bob|0/);
 });
 
 test("buildSummary labels unknown leaderboard gaps as unavailable instead of zero", () => {

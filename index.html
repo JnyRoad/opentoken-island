@@ -1256,6 +1256,12 @@
       return Math.max(0, Math.min(100, percent));
     }
 
+    function signedRankDelta(value) {
+      const delta = Number(value);
+      if (!Number.isFinite(delta)) return "--";
+      return delta >= 0 ? `+${delta}` : String(delta);
+    }
+
     function renderTools(tools) {
       const rows = (Array.isArray(tools) ? tools : []).map((tool) => {
         const row = document.createElement("div");
@@ -1270,7 +1276,7 @@
         value.className = "tool-value";
 
         name.textContent = tool && tool.label ? String(tool.label) : "Unknown";
-        fill.style.width = `${clampPercent(tool && tool.pct)}%`;
+        fill.style.width = `${clampPercent(tool && tool.barPct)}%`;
         value.textContent = tool && tool.valueLabel ? String(tool.valueLabel) : "0";
 
         bar.appendChild(fill);
@@ -1282,7 +1288,18 @@
 
     function renderSummary(data) {
       if (!data || !data.ok) return;
-      const rank = data.rank || 17;
+      const rank = Number(data.rank);
+      const hasRank = Number.isFinite(rank) && rank > 0;
+      const rankLabel = data.rankLabel || (hasRank ? `#${rank}` : "#--");
+      const gapToPreviousLabel = data.gapToPreviousLabel || "--";
+      const leadOverNextLabel = data.leadOverNextLabel || "--";
+      const rankBattleDetail = data.rankEstimated
+        ? "等待官网确认"
+        : !hasRank
+          ? "等待榜单排名"
+          : rank === 1
+            ? `领先下一名 ${leadOverNextLabel}`
+            : `距离 #${rank - 1} 差 ${gapToPreviousLabel}`;
       const total = data.total || 0;
       const totalLabel = data.totalLabel || "0";
       const xp = Math.min(data.xp || 0, data.xpMax || 300_000_000);
@@ -1292,11 +1309,15 @@
 
       menuValue.textContent = totalLabel;
       totalValue.textContent = totalLabel;
-      rankValue.textContent = `#${rank}`;
+      rankValue.textContent = rankLabel;
       xpText.textContent = `${xp.toLocaleString()} / ${xpMax.toLocaleString()} XP`;
       xpFill.style.width = `${Math.max(4, Math.round((xp / xpMax) * 100))}%`;
-      rankDelta.textContent = `+${data.rankDelta || 0}`;
-      rankGap.innerHTML = `排名战报<br>距离 #${rank - 1} 差 ${(data.nextRankGap || 0).toLocaleString()}`;
+      rankDelta.textContent = data.rankDeltaLabel || signedRankDelta(data.rankDelta);
+      rankGap.replaceChildren(
+        document.createTextNode("排名战报"),
+        document.createElement("br"),
+        document.createTextNode(rankBattleDetail)
+      );
       dailyQuestCopy.textContent = questGap > 0
         ? `还差 ${questGap.toLocaleString()}，完成后解锁「High Output」`
         : "今日任务已完成，High Output 已解锁";
@@ -1320,7 +1341,7 @@
           rank: data && data.rank || null
         });
         if (announce) {
-          events.rank.copy = `真实数据已刷新：今日 ${data.totalLabel} token，当前排名 #${data.rank}。`;
+          events.rank.copy = `真实数据已刷新：今日 ${data.totalLabel || "--"} token，当前排名 ${data.rankLabel || "#--"}。`;
           showEvent("rank");
         }
       } catch (error) {
